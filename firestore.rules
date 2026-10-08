@@ -1,0 +1,205 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isYalixAdminEmail() {
+      return isSignedIn() && (
+        request.auth.token.email == 'lakshmi@yalixvalor.com' ||
+        request.auth.token.email == 'lakshmi@yalixflow.com' ||
+        request.auth.token.email == 'lnarayanan97@gmail.com'
+      );
+    }
+
+    function isAuthorizedAdmin() {
+      return isSignedIn() && (
+        isYalixAdminEmail() ||
+        (exists(/databases/$(database)/documents/authorizedUsers/$(request.auth.uid)) &&
+         (get(/databases/$(database)/documents/authorizedUsers/$(request.auth.uid)).data.role == 'ADMIN' ||
+          get(/databases/$(database)/documents/authorizedUsers/$(request.auth.uid)).data.role == 'admin') &&
+         get(/databases/$(database)/documents/authorizedUsers/$(request.auth.uid)).data.active == true) ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'ADMIN' ||
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') &&
+         (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.active == true ||
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.status == 'active'))
+      );
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Authorized Users Collection
+    match /authorizedUsers/{userId} {
+      allow get, list: if isSignedIn() && (request.auth.uid == userId || isAuthorizedAdmin());
+      allow create, update: if isSignedIn() && (
+        isYalixAdminEmail() ||
+        isAuthorizedAdmin() ||
+        (request.auth.uid == userId && (request.auth.token.email == 'lakshmi@yalixvalor.com' || request.auth.token.email == 'lakshmi@yalixflow.com' || request.auth.token.email == 'lnarayanan97@gmail.com'))
+      );
+      allow delete: if isAuthorizedAdmin();
+    }
+
+    // Users Collection
+    match /users/{userId} {
+      allow get: if isSignedIn() && (request.auth.uid == userId || isAuthorizedAdmin());
+      allow list: if isAuthorizedAdmin();
+      allow create: if isSignedIn() && (
+        isYalixAdminEmail() ||
+        isAuthorizedAdmin() ||
+        request.auth.uid == userId
+      );
+      allow update: if isSignedIn() && (
+        isAuthorizedAdmin() ||
+        (request.auth.uid == userId && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'updatedAt']))
+      );
+      allow delete: if isAuthorizedAdmin();
+    }
+
+    // Companies Collection
+    match /companies/{companyId} {
+      allow get, list: if isAuthorizedAdmin();
+      allow create: if isAuthorizedAdmin() && isValidId(companyId) &&
+        incoming().companyName is string && incoming().companyName.size() > 0 && incoming().companyName.size() <= 200;
+      allow update: if isAuthorizedAdmin() && isValidId(companyId) &&
+        (!('companyName' in incoming()) || (incoming().companyName is string && incoming().companyName.size() > 0 && incoming().companyName.size() <= 200));
+      allow delete: if isAuthorizedAdmin();
+    }
+
+    // Contacts Collection
+    match /contacts/{contactId} {
+      allow get, list: if isAuthorizedAdmin();
+      allow create: if isAuthorizedAdmin() && isValidId(contactId) &&
+        incoming().firstName is string && incoming().firstName.size() > 0 && incoming().firstName.size() <= 100 &&
+        incoming().businessEmail is string && incoming().businessEmail.size() > 0 && incoming().businessEmail.size() <= 200;
+      allow update: if isAuthorizedAdmin() && isValidId(contactId);
+      allow delete: if isAuthorizedAdmin();
+    }
+
+    // Leads Collection
+    match /leads/{leadId} {
+      allow get, list: if isAuthorizedAdmin();
+      allow create: if isAuthorizedAdmin() && isValidId(leadId) &&
+        incoming().leadStatus in ['NEW', 'RESEARCHED', 'CONTACTED', 'REPLIED', 'INTERESTED', 'QUOTATION', 'NEGOTIATION', 'WON', 'LOST', 'NOT_INTERESTED'] &&
+        incoming().priority in ['LOW', 'MEDIUM', 'HIGH', 'URGENT'];
+      allow update: if isAuthorizedAdmin() && isValidId(leadId);
+      allow delete: if isAuthorizedAdmin();
+    }
+
+    // Products Master Collection
+    match /products/{productId} {
+      allow get, list: if isAuthorizedAdmin();
+      allow create, update: if isAuthorizedAdmin() && isValidId(productId) &&
+        incoming().name is string && incoming().name.size() > 0 && incoming().name.size() <= 200;
+      allow delete: if isAuthorizedAdmin();
+    }
+
+    // Imports Collection
+    match /imports/{importId} {
+      allow get, list: if isAuthorizedAdmin();
+      allow create: if isAuthorizedAdmin() && isValidId(importId);
+      allow update, delete: if isAuthorizedAdmin();
+    }
+
+    // Import Logs Collection
+    match /import_logs/{logId} {
+      allow get, list: if isAuthorizedAdmin();
+      allow create: if isAuthorizedAdmin();
+      allow update, delete: if isAuthorizedAdmin();
+    }
+
+    // Follow-ups Collection
+    match /followups/{followUpId} {
+      allow get, list: if isAuthorizedAdmin();
+      allow create: if isAuthorizedAdmin() && isValidId(followUpId) &&
+        incoming().title is string && incoming().title.size() > 0 && incoming().title.size() <= 250;
+      allow update: if isAuthorizedAdmin() && isValidId(followUpId);
+      allow delete: if isAuthorizedAdmin();
+    }
+
+    // Activity Timeline Collection
+    match /activities/{activityId} {
+      allow get, list: if isAuthorizedAdmin();
+      allow create: if isAuthorizedAdmin() && isValidId(activityId) &&
+        incoming().type is string && incoming().description is string;
+      allow update, delete: if isAuthorizedAdmin();
+    }
+
+    // Email Templates Collection
+    match /email_templates/{templateId} {
+      allow get, list: if isAuthorizedAdmin();
+      allow create, update: if isAuthorizedAdmin() && isValidId(templateId) &&
+        incoming().name is string && incoming().name.size() > 0 && incoming().name.size() <= 200 &&
+        incoming().subject is string && incoming().subject.size() > 0 && incoming().subject.size() <= 300;
+      allow delete: if isAuthorizedAdmin();
+    }
+
+    // Campaigns Collection
+    match /campaigns/{campaignId} {
+      allow get, list: if isAuthorizedAdmin();
+      allow create, update: if isAuthorizedAdmin() && isValidId(campaignId) &&
+        incoming().name is string && incoming().name.size() > 0 && incoming().name.size() <= 200;
+      allow delete: if isAuthorizedAdmin();
+    }
+
+    // Campaign Recipients Collection
+    match /campaign_recipients/{recId} {
+      allow get, list: if isAuthorizedAdmin();
+      allow create, update: if isAuthorizedAdmin();
+      allow delete: if isAuthorizedAdmin();
+    }
+
+    // Email Events Collection
+    match /email_events/{eventId} {
+      allow get, list: if isAuthorizedAdmin();
+      allow create: if isAuthorizedAdmin();
+      allow update, delete: if false;
+    }
+
+    // Unsubscribes Collection
+    match /unsubscribes/{unsubId} {
+      allow get, list: if isAuthorizedAdmin();
+      allow create: if isAuthorizedAdmin();
+      allow update, delete: if false;
+    }
+
+    // Suppression List Collection
+    match /suppression_list/{suppId} {
+      allow get, list: if isAuthorizedAdmin();
+      allow create, update: if isAuthorizedAdmin();
+      allow delete: if isAuthorizedAdmin();
+    }
+
+    // Settings Collection
+    match /settings/{settingId} {
+      allow get, list: if isAuthorizedAdmin();
+      allow create, update, delete: if isAuthorizedAdmin();
+    }
+
+    // Audit Logs Collection (Immutable, append-only)
+    match /audit_logs/{auditId} {
+      allow get, list: if isAuthorizedAdmin();
+      allow create: if isAuthorizedAdmin() && isValidId(auditId) &&
+        incoming().performedBy == request.auth.uid;
+      allow update, delete: if false;
+    }
+  }
+}

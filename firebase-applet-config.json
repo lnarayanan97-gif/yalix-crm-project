@@ -1,0 +1,12 @@
+{
+  "projectId": "yalix-crm-project",
+  "appId": "1:509610441716:web:a1f7139b33a7b1b377d7a1",
+  "apiKey": "AIzaSyC4fftQA-PYTFIqgIxKubLOqXRLfLi0H7g",
+  "authDomain": "yalix-crm-project.firebaseapp.com",
+  "firestoreDatabaseId": "(default)",
+  "storageBucket": "yalix-crm-project.firebasestorage.app",
+  "messagingSenderId": "509610441716",
+  "measurementId": "",
+  "oAuthClientId": "",
+  "recaptchaSiteKey": ""
+}

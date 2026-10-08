@@ -1,0 +1,6 @@
+{
+  "name": "YALIX CRM",
+  "description": "Private B2B CRM and customer intelligence platform for YALIX: manage companies, contacts, leads, products, data imports, and compliant campaigns.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,285 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Authorized YALIX team member profile",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "maxLength": 200 },
+        "displayName": { "type": "string", "maxLength": 100 },
+        "role": { "type": "string", "enum": ["admin", "manager", "member"] },
+        "status": { "type": "string", "enum": ["active", "suspended"] },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["email", "role", "status"]
+    },
+    "Company": {
+      "title": "Company",
+      "description": "B2B company record",
+      "type": "object",
+      "properties": {
+        "companyId": { "type": "string", "maxLength": 128 },
+        "companyName": { "type": "string", "maxLength": 200 },
+        "website": { "type": "string", "maxLength": 200 },
+        "country": { "type": "string", "maxLength": 100 },
+        "state": { "type": "string", "maxLength": 100 },
+        "city": { "type": "string", "maxLength": 100 },
+        "address": { "type": "string", "maxLength": 300 },
+        "industry": { "type": "string", "maxLength": 100 },
+        "companySize": { "type": "string", "maxLength": 50 },
+        "revenue": { "type": "string", "maxLength": 50 },
+        "linkedinUrl": { "type": "string", "maxLength": 250 },
+        "source": { "type": "string", "maxLength": 100 },
+        "sourceDate": { "type": "string", "maxLength": 50 },
+        "status": { "type": "string", "maxLength": 50 },
+        "notes": { "type": "string", "maxLength": 5000 },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["companyName"]
+    },
+    "Contact": {
+      "title": "Contact",
+      "description": "B2B business contact record",
+      "type": "object",
+      "properties": {
+        "contactId": { "type": "string", "maxLength": 128 },
+        "companyId": { "type": "string", "maxLength": 128 },
+        "firstName": { "type": "string", "maxLength": 100 },
+        "lastName": { "type": "string", "maxLength": 100 },
+        "jobTitle": { "type": "string", "maxLength": 150 },
+        "department": { "type": "string", "maxLength": 100 },
+        "businessEmail": { "type": "string", "maxLength": 200 },
+        "secondaryEmail": { "type": "string", "maxLength": 200 },
+        "phone": { "type": "string", "maxLength": 50 },
+        "mobile": { "type": "string", "maxLength": 50 },
+        "linkedinUrl": { "type": "string", "maxLength": 250 },
+        "country": { "type": "string", "maxLength": 100 },
+        "source": { "type": "string", "maxLength": 100 },
+        "emailStatus": { "type": "string", "enum": ["VALID", "INVALID", "RISKY", "UNVERIFIED", "BOUNCED"] },
+        "contactStatus": { "type": "string", "enum": ["ACTIVE", "INACTIVE", "UNSUBSCRIBED"] },
+        "lastContactedAt": { "type": "string" },
+        "lastRepliedAt": { "type": "string" },
+        "notes": { "type": "string", "maxLength": 5000 },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["firstName", "businessEmail"]
+    },
+    "Lead": {
+      "title": "Lead",
+      "description": "Sales pipeline lead record",
+      "type": "object",
+      "properties": {
+        "leadId": { "type": "string", "maxLength": 128 },
+        "companyId": { "type": "string", "maxLength": 128 },
+        "contactId": { "type": "string", "maxLength": 128 },
+        "productInterest": { "type": "string", "maxLength": 150 },
+        "leadSource": { "type": "string", "maxLength": 100 },
+        "leadStatus": {
+          "type": "string",
+          "enum": ["NEW", "RESEARCHED", "CONTACTED", "REPLIED", "INTERESTED", "QUOTATION", "NEGOTIATION", "WON", "LOST", "NOT_INTERESTED"]
+        },
+        "priority": { "type": "string", "enum": ["LOW", "MEDIUM", "HIGH", "URGENT"] },
+        "assignedTo": { "type": "string", "maxLength": 100 },
+        "lastContactedAt": { "type": "string" },
+        "nextFollowUpAt": { "type": "string" },
+        "notes": { "type": "string", "maxLength": 5000 },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["leadStatus", "priority"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "YALIX Product catalogue master",
+      "type": "object",
+      "properties": {
+        "productId": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 200 },
+        "description": { "type": "string", "maxLength": 1000 },
+        "category": { "type": "string", "maxLength": 100 },
+        "unit": { "type": "string", "maxLength": 50 },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["name", "active"]
+    },
+    "Import": {
+      "title": "Import",
+      "description": "Batch import record",
+      "type": "object",
+      "properties": {
+        "importId": { "type": "string", "maxLength": 128 },
+        "fileName": { "type": "string", "maxLength": 255 },
+        "fileType": { "type": "string", "maxLength": 50 },
+        "rowCount": { "type": "number" },
+        "processedCount": { "type": "number" },
+        "createdCount": { "type": "number" },
+        "updatedCount": { "type": "number" },
+        "duplicateCount": { "type": "number" },
+        "invalidCount": { "type": "number" },
+        "skippedCount": { "type": "number" },
+        "status": { "type": "string", "maxLength": 50 },
+        "createdBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["fileName", "status"]
+    },
+    "FollowUp": {
+      "title": "FollowUp",
+      "description": "Follow-up task scheduled with a lead or contact",
+      "type": "object",
+      "properties": {
+        "followUpId": { "type": "string", "maxLength": 128 },
+        "companyId": { "type": "string", "maxLength": 128 },
+        "contactId": { "type": "string", "maxLength": 128 },
+        "leadId": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 250 },
+        "note": { "type": "string", "maxLength": 2000 },
+        "dueDate": { "type": "string", "maxLength": 50 },
+        "priority": { "type": "string", "enum": ["LOW", "MEDIUM", "HIGH", "URGENT"] },
+        "status": { "type": "string", "enum": ["PENDING", "COMPLETED", "CANCELLED"] },
+        "assignedTo": { "type": "string", "maxLength": 100 },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["title", "dueDate", "priority", "status"]
+    },
+    "Activity": {
+      "title": "Activity",
+      "description": "CRM activity timeline entry",
+      "type": "object",
+      "properties": {
+        "activityId": { "type": "string", "maxLength": 128 },
+        "companyId": { "type": "string", "maxLength": 128 },
+        "contactId": { "type": "string", "maxLength": 128 },
+        "leadId": { "type": "string", "maxLength": 128 },
+        "type": { "type": "string", "maxLength": 50 },
+        "description": { "type": "string", "maxLength": 1000 },
+        "performedBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["type", "description"]
+    },
+    "EmailTemplate": {
+      "title": "EmailTemplate",
+      "description": "Email campaign template",
+      "type": "object",
+      "properties": {
+        "templateId": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 200 },
+        "subject": { "type": "string", "maxLength": 300 },
+        "htmlBody": { "type": "string", "maxLength": 20000 },
+        "textFallback": { "type": "string", "maxLength": 10000 },
+        "createdBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["name", "subject", "htmlBody"]
+    },
+    "Campaign": {
+      "title": "Campaign",
+      "description": "B2B outreach campaign",
+      "type": "object",
+      "properties": {
+        "campaignId": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 200 },
+        "subject": { "type": "string", "maxLength": 300 },
+        "templateId": { "type": "string", "maxLength": 128 },
+        "product": { "type": "string", "maxLength": 150 },
+        "recipientCount": { "type": "number" },
+        "status": { "type": "string", "enum": ["DRAFT", "SCHEDULED", "RUNNING", "PAUSED", "COMPLETED", "CANCELLED"] },
+        "scheduledAt": { "type": "string" },
+        "createdBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["name", "subject", "status"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Sensitive action audit log",
+      "type": "object",
+      "properties": {
+        "auditId": { "type": "string", "maxLength": 128 },
+        "action": { "type": "string", "maxLength": 100 },
+        "targetCollection": { "type": "string", "maxLength": 100 },
+        "targetId": { "type": "string", "maxLength": 128 },
+        "details": { "type": "string", "maxLength": 2000 },
+        "performedBy": { "type": "string", "maxLength": 128 },
+        "performedByEmail": { "type": "string", "maxLength": 200 },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["action", "performedBy"]
+    },
+    "AuthorizedUser": {
+      "title": "AuthorizedUser",
+      "description": "Whitelisted administrator or team member record in authorizedUsers",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "maxLength": 200 },
+        "displayName": { "type": "string", "maxLength": 100 },
+        "role": { "type": "string", "enum": ["ADMIN", "MANAGER", "MEMBER"] },
+        "active": { "type": "boolean" },
+        "status": { "type": "string", "enum": ["active", "suspended"] },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["email", "role", "active"]
+    }
+  },
+  "firestore": {
+    "/authorizedUsers/{userId}": {
+      "schema": "AuthorizedUser",
+      "description": "Authorized administrators and users list"
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Authorized YALIX user account profiles"
+    },
+    "/companies/{companyId}": {
+      "schema": "Company",
+      "description": "B2B client and prospect companies"
+    },
+    "/contacts/{contactId}": {
+      "schema": "Contact",
+      "description": "Key B2B decision makers and contacts"
+    },
+    "/leads/{leadId}": {
+      "schema": "Lead",
+      "description": "CRM pipeline leads"
+    },
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "YALIX product catalog"
+    },
+    "/imports/{importId}": {
+      "schema": "Import",
+      "description": "Import batch summaries"
+    },
+    "/followups/{followUpId}": {
+      "schema": "FollowUp",
+      "description": "Scheduled sales and relationship follow-ups"
+    },
+    "/activities/{activityId}": {
+      "schema": "Activity",
+      "description": "Activity logs for contacts and companies"
+    },
+    "/email_templates/{templateId}": {
+      "schema": "EmailTemplate",
+      "description": "B2B email copy and outreach templates"
+    },
+    "/campaigns/{campaignId}": {
+      "schema": "Campaign",
+      "description": "Email campaigns"
+    },
+    "/audit_logs/{auditId}": {
+      "schema": "AuditLog",
+      "description": "Audit trail for sensitive CRM actions"
+    }
+  }
+}
