@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import {
   User,
   onAuthStateChanged,
@@ -33,6 +33,8 @@ interface AuthContextType {
   signOut: () => Promise<void>;
   authError: string | null;
   setAuthError: (err: string | null) => void;
+  initError: string | null;
+  retryInitialization: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -44,119 +46,174 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isAuthorized, setIsAuthorized] = useState<boolean>(false);
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [initError, setInitError] = useState<string | null>(null);
+  const [retryKey, setRetryKey] = useState<number>(0);
+
+  const retryInitialization = useCallback(() => {
+    setInitError(null);
+    setAuthError(null);
+    setLoading(true);
+    setRetryKey((k) => k + 1);
+  }, []);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      setLoading(true);
-      setAuthError(null);
+    let isMounted = true;
+    setLoading(true);
+    setInitError(null);
 
-      if (!user) {
-        setCurrentUser(null);
-        setUserProfile(null);
-        setIsAuthorized(false);
-        setIsAdmin(false);
-        setLoading(false);
-        return;
-      }
+    // Track state resolution across listeners
+    let hasResolvedInitialAuth = false;
 
-      setCurrentUser(user);
+    const unsubscribe = onAuthStateChanged(
+      auth,
+      async (user) => {
+        if (!isMounted) return;
+        hasResolvedInitialAuth = true;
+        setAuthError(null);
 
-      try {
-        const userEmailLower = (user.email || '').toLowerCase().trim();
-        const isWhitelistedAdmin = ALLOWED_ADMIN_EMAILS.includes(userEmailLower);
-
-        // Check authorizedUsers collection first with offline-safe error handling
-        const authUserRef = doc(db, 'authorizedUsers', user.uid);
-        let authUserSnap: any = null;
-        try {
-          authUserSnap = await getDoc(authUserRef);
-        } catch (fetchErr: any) {
-          console.warn('authorizedUsers lookup offline or deferred:', fetchErr?.message || fetchErr);
+        // Path 1: Not authenticated (signed out) -> Immediately complete loading and show login
+        if (!user) {
+          setCurrentUser(null);
+          setUserProfile(null);
+          setIsAuthorized(false);
+          setIsAdmin(false);
+          setLoading(false);
+          return;
         }
 
-        const userDocRef = doc(db, 'users', user.uid);
-        let userDocSnap: any = null;
+        // Path 2: User is present
+        setCurrentUser(user);
+
         try {
-          userDocSnap = await getDoc(userDocRef);
-        } catch (fetchErr: any) {
-          console.warn('users doc lookup offline or deferred:', fetchErr?.message || fetchErr);
-        }
+          const userEmailLower = (user.email || '').toLowerCase().trim();
+          const isWhitelistedAdmin = ALLOWED_ADMIN_EMAILS.includes(userEmailLower);
 
-        if (isWhitelistedAdmin) {
-          // Provision or sync authorized record in authorizedUsers and users
-          const adminRecord: AuthorizedUser = {
-            uid: user.uid,
-            email: user.email || INITIAL_ADMIN_EMAIL,
-            displayName: user.displayName || (userEmailLower.includes('lakshmi') ? 'Lakshmi' : 'YALIX Super Admin'),
-            role: 'ADMIN',
-            active: true,
-            status: 'active',
-            createdAt: authUserSnap?.exists?.() ? authUserSnap.data()?.createdAt || new Date().toISOString() : new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          };
+          if (isWhitelistedAdmin) {
+            // Immediately authorize designated admin in-memory to prevent blocking UI on offline/slow Firestore
+            const adminRecord: AuthorizedUser = {
+              uid: user.uid,
+              email: user.email || INITIAL_ADMIN_EMAIL,
+              displayName:
+                user.displayName ||
+                (userEmailLower.includes('lakshmi') ? 'Lakshmi' : 'YALIX Super Admin'),
+              role: 'ADMIN',
+              active: true,
+              status: 'active',
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            };
 
-          try {
-            await setDoc(authUserRef, adminRecord, { merge: true });
-            await setDoc(userDocRef, adminRecord, { merge: true });
-          } catch (writeErr) {
-            console.warn('Admin record sync note (offline/deferred):', writeErr);
+            setUserProfile(adminRecord);
+            setIsAuthorized(true);
+            setIsAdmin(true);
+            setLoading(false);
+
+            // Sync record in Firestore asynchronously in background without delaying user
+            (async () => {
+              try {
+                const authUserRef = doc(db, 'authorizedUsers', user.uid);
+                const userDocRef = doc(db, 'users', user.uid);
+                await Promise.allSettled([
+                  setDoc(authUserRef, adminRecord, { merge: true }),
+                  setDoc(userDocRef, adminRecord, { merge: true }),
+                ]);
+              } catch (bgErr) {
+                console.warn('Background admin record sync notice (offline/deferred):', bgErr);
+              }
+            })();
+            return;
           }
 
-          setUserProfile(adminRecord);
-          setIsAuthorized(true);
-          setIsAdmin(true);
-        } else if (authUserSnap?.exists?.()) {
-          const authData = authUserSnap.data() as AuthorizedUser;
-          const isActive = authData.active === true || authData.status === 'active';
-          const isRoleAdmin = authData.role === 'ADMIN';
+          // Non-whitelisted user: Query authorized records concurrently
+          const authUserRef = doc(db, 'authorizedUsers', user.uid);
+          const userDocRef = doc(db, 'users', user.uid);
 
-          setUserProfile(authData);
-          // Only authorized ADMIN accounts can access CRM routes per policy
-          setIsAuthorized(isActive && isRoleAdmin);
-          setIsAdmin(isRoleAdmin);
-        } else if (userDocSnap?.exists?.()) {
-          const userData = userDocSnap.data() as UserProfile;
-          const isActive = userData.active === true || userData.status === 'active';
-          const isRoleAdmin = userData.role === 'ADMIN' || userData.role === 'admin';
+          const [authUserResult, userDocResult] = await Promise.allSettled([
+            getDoc(authUserRef),
+            getDoc(userDocRef),
+          ]);
 
-          setUserProfile(userData);
-          setIsAuthorized(isActive && isRoleAdmin);
-          setIsAdmin(isRoleAdmin);
-        } else {
-          // External or unauthorized account: deny access completely
-          setIsAuthorized(false);
-          setIsAdmin(false);
-          setUserProfile(null);
+          const authUserSnap = authUserResult.status === 'fulfilled' ? authUserResult.value : null;
+          const userDocSnap = userDocResult.status === 'fulfilled' ? userDocResult.value : null;
+
+          if (authUserSnap?.exists?.()) {
+            const authData = authUserSnap.data() as AuthorizedUser;
+            const isActive = authData.active === true || authData.status === 'active';
+            const isRoleAdmin = authData.role === 'ADMIN';
+
+            setUserProfile(authData);
+            setIsAuthorized(isActive && isRoleAdmin);
+            setIsAdmin(isRoleAdmin);
+          } else if (userDocSnap?.exists?.()) {
+            const userData = userDocSnap.data() as UserProfile;
+            const isActive = userData.active === true || userData.status === 'active';
+            const isRoleAdmin = userData.role === 'ADMIN' || userData.role === 'admin';
+
+            setUserProfile(userData);
+            setIsAuthorized(isActive && isRoleAdmin);
+            setIsAdmin(isRoleAdmin);
+          } else {
+            // Non-authorized account
+            setIsAuthorized(false);
+            setIsAdmin(false);
+            setUserProfile(null);
+          }
+        } catch (err: any) {
+          console.warn('Authorization verification check notice (offline/deferred):', err?.message || err);
+          const userEmailLower = (user.email || '').toLowerCase().trim();
+          if (ALLOWED_ADMIN_EMAILS.includes(userEmailLower)) {
+            const fallbackAdmin: AuthorizedUser = {
+              uid: user.uid,
+              email: user.email || INITIAL_ADMIN_EMAIL,
+              displayName:
+                user.displayName ||
+                (userEmailLower.includes('lakshmi') ? 'Lakshmi' : 'YALIX Super Admin'),
+              role: 'ADMIN',
+              active: true,
+              status: 'active',
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            };
+            setUserProfile(fallbackAdmin);
+            setIsAuthorized(true);
+            setIsAdmin(true);
+          } else {
+            setIsAuthorized(false);
+            setIsAdmin(false);
+            setUserProfile(null);
+          }
+        } finally {
+          if (isMounted) {
+            setLoading(false);
+          }
         }
-      } catch (err: any) {
-        console.warn('Authorization verification check note (offline/deferred):', err?.message || err);
-        const userEmailLower = (user.email || '').toLowerCase().trim();
-        if (ALLOWED_ADMIN_EMAILS.includes(userEmailLower)) {
-          const fallbackAdmin: AuthorizedUser = {
-            uid: user.uid,
-            email: user.email || INITIAL_ADMIN_EMAIL,
-            displayName: user.displayName || (userEmailLower.includes('lakshmi') ? 'Lakshmi' : 'YALIX Super Admin'),
-            role: 'ADMIN',
-            active: true,
-            status: 'active',
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          };
-          setUserProfile(fallbackAdmin);
-          setIsAuthorized(true);
-          setIsAdmin(true);
-        } else {
-          setIsAuthorized(false);
-          setIsAdmin(false);
-          setUserProfile(null);
+      },
+      (listenerError) => {
+        // Firebase Auth listener error
+        console.error('Firebase onAuthStateChanged error:', listenerError);
+        if (isMounted) {
+          setInitError(listenerError?.message || 'Firebase Authentication failed to initialize.');
+          setLoading(false);
         }
-      } finally {
-        setLoading(false);
       }
-    });
+    );
 
-    return () => unsubscribe();
-  }, []);
+    // Official Firebase authStateReady listener to catch initial auth load failures
+    if (typeof auth.authStateReady === 'function') {
+      auth.authStateReady().catch((readyError) => {
+        console.error('Firebase authStateReady error:', readyError);
+        if (isMounted && !hasResolvedInitialAuth) {
+          setInitError(readyError?.message || 'Failed to establish Firebase Authentication connection.');
+          setLoading(false);
+        }
+      });
+    }
+
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
+  }, [retryKey]);
 
   // First-time administrator creation / activation for lakshmi@yalixvalor.com
   // ONLY executed after user enters their chosen CRM password in UI.
@@ -280,6 +337,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         signOut,
         authError,
         setAuthError,
+        initError,
+        retryInitialization,
       }}
     >
       {children}

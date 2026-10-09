@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { AlertCircle, RefreshCw } from 'lucide-react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ToastProvider, useToast } from './context/ToastContext';
 import { LoginView } from './components/auth/LoginView';
@@ -34,7 +35,13 @@ import { ensureYalixProducts, seedSampleCRMData } from './services/seedService';
 import { testConnection } from './firebase/config';
 
 function MainApp() {
-  const { currentUser, isAuthorized, loading: authLoading } = useAuth();
+  const {
+    currentUser,
+    isAuthorized,
+    loading: authLoading,
+    initError,
+    retryInitialization,
+  } = useAuth();
   const { success, error, info } = useToast();
 
   const [currentTab, setCurrentTab] = useState<NavTab>('dashboard');
@@ -216,6 +223,34 @@ function MainApp() {
     }
   };
 
+  // Initialization Error screen with Retry option
+  if (initError) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-slate-300 gap-6 p-6">
+        <div className="flex items-center justify-center">
+          <YalixWordmark size="xl" />
+        </div>
+        <div className="max-w-md w-full bg-slate-900/90 border border-red-500/30 rounded-2xl p-6 sm:p-8 shadow-2xl backdrop-blur-md text-center">
+          <div className="w-12 h-12 rounded-full bg-red-950/60 border border-red-500/40 text-red-400 flex items-center justify-center mx-auto mb-4">
+            <AlertCircle className="w-6 h-6" />
+          </div>
+          <h2 className="text-lg font-bold text-white mb-2">Initialization Error</h2>
+          <p className="text-xs text-slate-400 mb-6 leading-relaxed">
+            {initError}
+          </p>
+          <button
+            onClick={retryInitialization}
+            className="w-full py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white font-semibold text-xs tracking-wider uppercase transition-colors shadow-lg shadow-blue-900/40 flex items-center justify-center gap-2 cursor-pointer"
+          >
+            <RefreshCw className="w-4 h-4" />
+            Retry Connection
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Active Loading screen
   if (authLoading) {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-slate-400 gap-6 p-4">
