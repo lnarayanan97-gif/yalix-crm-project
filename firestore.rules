@@ -47,25 +47,21 @@ service cloud.firestore {
       return resource.data;
     }
 
-    // Authorized Users Collection
+    // Authorized Users Collection - strictly manageable only by ADMIN
     match /authorizedUsers/{userId} {
-      allow get, list: if isSignedIn() && (request.auth.uid == userId || isAuthorizedAdmin());
-      allow create, update: if isSignedIn() && (
-        isYalixAdminEmail() ||
-        isAuthorizedAdmin() ||
-        (request.auth.uid == userId && (request.auth.token.email == 'lakshmi@yalixvalor.com' || request.auth.token.email == 'lakshmi@yalixflow.com' || request.auth.token.email == 'lnarayanan97@gmail.com'))
-      );
-      allow delete: if isAuthorizedAdmin();
+      allow get: if isSignedIn() && (request.auth.uid == userId || isAuthorizedAdmin());
+      allow list: if isAuthorizedAdmin();
+      allow create, update, delete: if isAuthorizedAdmin() || isYalixAdminEmail();
     }
 
-    // Users Collection
+    // Users Collection - users cannot elevate their own role or active status
     match /users/{userId} {
       allow get: if isSignedIn() && (request.auth.uid == userId || isAuthorizedAdmin());
       allow list: if isAuthorizedAdmin();
       allow create: if isSignedIn() && (
         isYalixAdminEmail() ||
         isAuthorizedAdmin() ||
-        request.auth.uid == userId
+        (request.auth.uid == userId && incoming().role != 'ADMIN' && incoming().role != 'admin' && incoming().active != true)
       );
       allow update: if isSignedIn() && (
         isAuthorizedAdmin() ||
@@ -88,7 +84,7 @@ service cloud.firestore {
     match /contacts/{contactId} {
       allow get, list: if isAuthorizedAdmin();
       allow create: if isAuthorizedAdmin() && isValidId(contactId) &&
-        incoming().firstName is string && incoming().firstName.size() > 0 && incoming().firstName.size() <= 100 &&
+        incoming().firstName is string && incoming().firstName.size() >= 0 && incoming().firstName.size() <= 100 &&
         incoming().businessEmail is string && incoming().businessEmail.size() > 0 && incoming().businessEmail.size() <= 200;
       allow update: if isAuthorizedAdmin() && isValidId(contactId);
       allow delete: if isAuthorizedAdmin();

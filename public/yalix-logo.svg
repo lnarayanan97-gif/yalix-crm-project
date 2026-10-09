@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1260 300" width="1260" height="300">
+  <defs>
+    <style>
+      .yalix-blue { fill: #1652A5; }
+      .yalix-text {
+        font-family: 'Liberation Sans', 'Arial Black', 'Helvetica Neue', Arial, sans-serif;
+        font-weight: 900;
+        font-style: italic;
+        fill: #1652A5;
+        font-size: 182px;
+        letter-spacing: -1px;
+      }
+    </style>
+  </defs>
+  <g id="yalix-official-logo">
+    <!-- Top horizontal speed bar starting above the 'A' -->
+    <!-- Runs horizontally to the right, then angles downward parallel to the right stroke of 'X' -->
+    <path d="M 405 32 L 980 32 L 910 215 L 868 256 L 22 256 L 22 242 L 860 242 L 898 206 L 966 46 L 405 46 Z" fill="#1652A5"/>
+
+    <!-- YALIX Wordmark -->
+    <text x="250" y="214" class="yalix-text">YALIX</text>
+  </g>
+</svg>

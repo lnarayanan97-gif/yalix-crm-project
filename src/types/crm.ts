@@ -67,6 +67,7 @@ export interface Company {
   sourceDate?: string;
   status?: string;
   notes?: string;
+  originalCompanyName?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -81,6 +82,7 @@ export interface Contact {
   jobTitle?: string;
   department?: string;
   businessEmail: string;
+  emailHash?: string; // Deterministic SHA-256 email key for O(1) indexed lookup
   secondaryEmail?: string;
   phone?: string;
   mobile?: string;
@@ -92,6 +94,7 @@ export interface Contact {
   lastContactedAt?: string;
   lastRepliedAt?: string;
   notes?: string;
+  rawSourceValues?: Record<string, any>; // Preserves original un-normalized input
   createdAt: string;
   updatedAt: string;
 }
@@ -182,6 +185,7 @@ export interface ImportRecord {
   duplicateCount: number;
   invalidCount: number;
   skippedCount: number;
+  leadsCreatedCount?: number;
   status: 'PENDING' | 'COMPLETED' | 'FAILED';
   createdBy: string;
   createdAt: string;

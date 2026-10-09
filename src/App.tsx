@@ -18,6 +18,7 @@ import { ReportsView } from './components/modules/reports/ReportsView';
 import { SettingsView } from './components/modules/settings/SettingsView';
 import { Modal } from './components/common/Modal';
 import { LoadingSpinner } from './components/common/LoadingSpinner';
+import { YalixWordmark } from './components/common/YalixWordmark';
 
 import {
   Company,
@@ -104,7 +105,7 @@ function MainApp() {
         setProducts(refreshedProds);
       }
     } catch (err: any) {
-      console.error('Error fetching CRM data:', err);
+      console.warn('CRM data fetch notice (offline/deferred):', err?.message || err);
     } finally {
       setDataLoading(false);
     }
@@ -217,9 +218,9 @@ function MainApp() {
 
   if (authLoading) {
     return (
-      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-slate-400 gap-4">
-        <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-400 flex items-center justify-center text-white font-extrabold text-xl shadow-lg">
-          Y
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-slate-400 gap-6 p-4">
+        <div className="flex items-center justify-center">
+          <YalixWordmark size="xl" />
         </div>
         <div className="w-6 h-6 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
         <span className="text-xs uppercase font-medium tracking-wider text-slate-500">
@@ -313,7 +314,9 @@ function MainApp() {
         <ImportWizardView
           companies={companies}
           contacts={contacts}
+          products={products}
           onRefresh={loadCRMData}
+          onNavigate={setCurrentTab}
         />
       )}
 

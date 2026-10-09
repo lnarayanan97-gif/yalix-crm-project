@@ -510,8 +510,8 @@ export const crmService = {
         recentImportsCount: importsSnap.size,
         recentCampaignsCount: campaignsSnap.size,
       };
-    } catch (err) {
-      console.error('Error calculating dashboard stats:', err);
+    } catch (err: any) {
+      console.warn('Dashboard stats calculation notice (offline/deferred):', err?.message || err);
       return {
         totalCompanies: 0,
         totalContacts: 0,

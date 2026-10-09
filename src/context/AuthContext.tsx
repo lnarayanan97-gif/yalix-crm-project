@@ -65,12 +65,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const userEmailLower = (user.email || '').toLowerCase().trim();
         const isWhitelistedAdmin = ALLOWED_ADMIN_EMAILS.includes(userEmailLower);
 
-        // Check authorizedUsers collection first
+        // Check authorizedUsers collection first with offline-safe error handling
         const authUserRef = doc(db, 'authorizedUsers', user.uid);
-        const authUserSnap = await getDoc(authUserRef);
+        let authUserSnap: any = null;
+        try {
+          authUserSnap = await getDoc(authUserRef);
+        } catch (fetchErr: any) {
+          console.warn('authorizedUsers lookup offline or deferred:', fetchErr?.message || fetchErr);
+        }
 
         const userDocRef = doc(db, 'users', user.uid);
-        const userDocSnap = await getDoc(userDocRef);
+        let userDocSnap: any = null;
+        try {
+          userDocSnap = await getDoc(userDocRef);
+        } catch (fetchErr: any) {
+          console.warn('users doc lookup offline or deferred:', fetchErr?.message || fetchErr);
+        }
 
         if (isWhitelistedAdmin) {
           // Provision or sync authorized record in authorizedUsers and users
@@ -81,7 +91,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             role: 'ADMIN',
             active: true,
             status: 'active',
-            createdAt: authUserSnap.exists() ? authUserSnap.data()?.createdAt || new Date().toISOString() : new Date().toISOString(),
+            createdAt: authUserSnap?.exists?.() ? authUserSnap.data()?.createdAt || new Date().toISOString() : new Date().toISOString(),
             updatedAt: new Date().toISOString(),
           };
 
@@ -89,13 +99,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             await setDoc(authUserRef, adminRecord, { merge: true });
             await setDoc(userDocRef, adminRecord, { merge: true });
           } catch (writeErr) {
-            console.warn('Admin record sync note:', writeErr);
+            console.warn('Admin record sync note (offline/deferred):', writeErr);
           }
 
           setUserProfile(adminRecord);
           setIsAuthorized(true);
           setIsAdmin(true);
-        } else if (authUserSnap.exists()) {
+        } else if (authUserSnap?.exists?.()) {
           const authData = authUserSnap.data() as AuthorizedUser;
           const isActive = authData.active === true || authData.status === 'active';
           const isRoleAdmin = authData.role === 'ADMIN';
@@ -104,7 +114,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           // Only authorized ADMIN accounts can access CRM routes per policy
           setIsAuthorized(isActive && isRoleAdmin);
           setIsAdmin(isRoleAdmin);
-        } else if (userDocSnap.exists()) {
+        } else if (userDocSnap?.exists?.()) {
           const userData = userDocSnap.data() as UserProfile;
           const isActive = userData.active === true || userData.status === 'active';
           const isRoleAdmin = userData.role === 'ADMIN' || userData.role === 'admin';
@@ -118,15 +128,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setIsAdmin(false);
           setUserProfile(null);
         }
-      } catch (err) {
-        console.error('Error verifying authorization in Firestore:', err);
+      } catch (err: any) {
+        console.warn('Authorization verification check note (offline/deferred):', err?.message || err);
         const userEmailLower = (user.email || '').toLowerCase().trim();
         if (ALLOWED_ADMIN_EMAILS.includes(userEmailLower)) {
+          const fallbackAdmin: AuthorizedUser = {
+            uid: user.uid,
+            email: user.email || INITIAL_ADMIN_EMAIL,
+            displayName: user.displayName || (userEmailLower.includes('lakshmi') ? 'Lakshmi' : 'YALIX Super Admin'),
+            role: 'ADMIN',
+            active: true,
+            status: 'active',
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          };
+          setUserProfile(fallbackAdmin);
           setIsAuthorized(true);
           setIsAdmin(true);
         } else {
           setIsAuthorized(false);
           setIsAdmin(false);
+          setUserProfile(null);
         }
       } finally {
         setLoading(false);

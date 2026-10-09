@@ -15,6 +15,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { YalixWordmark } from '../common/YalixWordmark';
 
 export type NavTab =
   | 'dashboard'
@@ -82,18 +83,16 @@ export function Sidebar({
       >
         {/* Brand Header */}
         <div className="h-16 px-6 flex items-center justify-between border-b border-slate-800/80 bg-slate-950/40">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-400 flex items-center justify-center text-white font-extrabold text-lg shadow-md shadow-emerald-900/40 tracking-wider">
-              Y
-            </div>
-            <div className="flex flex-col">
-              <span className="font-bold text-white text-base tracking-tight leading-none flex items-center gap-1.5">
-                YALIX <span className="text-emerald-400 font-semibold text-xs tracking-widest">CRM</span>
-              </span>
-              <span className="text-[10px] text-slate-400 font-medium tracking-wide mt-1 uppercase">
-                Private B2B Database
+          <div className="flex flex-col justify-center">
+            <div className="flex items-center gap-2">
+              <YalixWordmark size="sm" />
+              <span className="text-emerald-400 font-bold text-xs tracking-widest uppercase">
+                CRM
               </span>
             </div>
+            <span className="text-[10px] text-slate-400 font-medium tracking-wide mt-1 uppercase">
+              Private B2B Database
+            </span>
           </div>
         </div>
 

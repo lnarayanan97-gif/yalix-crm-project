@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Shield, Lock, Mail, ArrowRight, AlertCircle, Sparkles, KeyRound, CheckCircle2 } from 'lucide-react';
 import { useAuth, INITIAL_ADMIN_EMAIL } from '../../context/AuthContext';
+import { YalixWordmark } from '../common/YalixWordmark';
 
 export function LoginView() {
   const { signInWithGoogle, signInWithEmail, createInitialAdminAccount, authError, setAuthError } = useAuth();
@@ -70,9 +71,9 @@ export function LoginView() {
 
       <div className="max-w-md w-full relative z-10">
         {/* Brand Banner */}
-        <div className="text-center mb-6">
-          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-400 text-white font-extrabold text-2xl shadow-xl shadow-emerald-900/50 mb-3.5 tracking-wider border border-emerald-400/20">
-            Y
+        <div className="text-center mb-7">
+          <div className="flex items-center justify-center mb-3">
+            <YalixWordmark size="xl" />
           </div>
           <h1 className="text-2xl font-extrabold text-white tracking-tight">
             YALIX <span className="text-emerald-400 font-bold">CRM</span>
