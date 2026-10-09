@@ -115,6 +115,9 @@ function MainApp() {
   });
 
   const [dataLoading, setDataLoading] = useState(false);
+  const [dataError, setDataError] = useState<string | null>(null);
+  const [campaignsLoading, setCampaignsLoading] = useState(false);
+  const [campaignsError, setCampaignsError] = useState<string | null>(null);
   const [isSeeding, setIsSeeding] = useState(false);
 
   // Quick Action Modal states
@@ -126,12 +129,13 @@ function MainApp() {
   const [newLead, setNewLead] = useState({ companyId: '', contactId: '', productInterest: '', leadStatus: 'NEW' as const, priority: 'HIGH' as const, notes: '' });
   const [newFollowUp, setNewFollowUp] = useState({ title: '', dueDate: new Date().toISOString().split('T')[0], priority: 'HIGH' as const, note: '', companyId: '' });
 
-  // Optimized full CRM sync (Deduplicated, zero-redundant-read, zero-unnecessary-testConnection)
+  // Optimized full CRM sync using Promise.allSettled to prevent single-query blockage
   const loadCRMData = useCallback(async () => {
     if (!currentUser || !isAuthorized) return;
     setDataLoading(true);
+    setDataError(null);
     try {
-      const [comps, cnts, lds, prods, fus, camps, imps] = await Promise.all([
+      const results = await Promise.allSettled([
         crmService.getCompanies(),
         crmService.getContacts(),
         crmService.getLeads(),
@@ -141,25 +145,50 @@ function MainApp() {
         crmService.getImports(),
       ]);
 
-      setCompanies(comps);
-      setContacts(cnts);
-      setLeads(lds);
-      setProducts(prods);
-      setFollowUps(fus);
-      setCampaigns(camps);
+      const [compsRes, cntsRes, ldsRes, prodsRes, fusRes, campsRes, impsRes] = results;
 
-      // Instant in-memory zero-read stats calculation
+      const comps = compsRes.status === 'fulfilled' && Array.isArray(compsRes.value) ? compsRes.value : [];
+      const cnts = cntsRes.status === 'fulfilled' && Array.isArray(cntsRes.value) ? cntsRes.value : [];
+      const lds = ldsRes.status === 'fulfilled' && Array.isArray(ldsRes.value) ? ldsRes.value : [];
+      const prods = prodsRes.status === 'fulfilled' && Array.isArray(prodsRes.value) ? prodsRes.value : [];
+      const fus = fusRes.status === 'fulfilled' && Array.isArray(fusRes.value) ? fusRes.value : [];
+      const camps = campsRes.status === 'fulfilled' && Array.isArray(campsRes.value) ? campsRes.value : [];
+      const imps = impsRes.status === 'fulfilled' && Array.isArray(impsRes.value) ? impsRes.value : [];
+
+      if (compsRes.status === 'fulfilled') setCompanies(comps);
+      if (cntsRes.status === 'fulfilled') setContacts(cnts);
+      if (ldsRes.status === 'fulfilled') setLeads(lds);
+      if (prodsRes.status === 'fulfilled') setProducts(prods);
+      if (fusRes.status === 'fulfilled') setFollowUps(fus);
+      if (campsRes.status === 'fulfilled') setCampaigns(camps);
+
+      // Check if any collection query failed
+      const failed = results.filter((r) => r.status === 'rejected');
+      if (failed.length > 0) {
+        const failedReason = failed
+          .map((f: any) => f.reason?.message || 'Collection read error')
+          .join('; ');
+        console.warn('CRM data fetch partial notice:', failedReason);
+        setDataError('Some CRM records could not be fetched from Firestore. Showing available data.');
+      }
+
+      // Safe zero-read dashboard stats calculation
       const dashboardStats = crmService.calculateDashboardStats(comps, cnts, lds, camps, fus, imps.length);
       setStats(dashboardStats);
 
-      // Auto-initialize standard YALIX catalog if empty
-      if (prods.length === 0) {
-        await ensureYalixProducts(currentUser.uid);
-        const refreshedProds = await crmService.getProducts(true);
-        setProducts(refreshedProds);
+      // Auto-initialize standard YALIX catalog if empty and products query succeeded
+      if (prodsRes.status === 'fulfilled' && prods.length === 0) {
+        try {
+          await ensureYalixProducts(currentUser.uid);
+          const refreshedProds = await crmService.getProducts(true);
+          setProducts(Array.isArray(refreshedProds) ? refreshedProds : []);
+        } catch (initErr) {
+          console.warn('Initial products catalog check note:', initErr);
+        }
       }
     } catch (err: any) {
       console.warn('CRM data fetch notice (offline/deferred):', err?.message || err);
+      setDataError(err?.message || 'Failed to load CRM data from Firestore.');
     } finally {
       setDataLoading(false);
     }
@@ -169,8 +198,9 @@ function MainApp() {
   const refreshCompanies = useCallback(async () => {
     try {
       const comps = await crmService.getCompanies(true);
-      setCompanies(comps);
-      setStats((prev) => ({ ...prev, totalCompanies: comps.length }));
+      const safeComps = Array.isArray(comps) ? comps : [];
+      setCompanies(safeComps);
+      setStats((prev) => ({ ...prev, totalCompanies: safeComps.length }));
     } catch (err: any) {
       console.warn('Failed to refresh companies:', err);
     }
@@ -179,9 +209,10 @@ function MainApp() {
   const refreshContacts = useCallback(async () => {
     try {
       const cnts = await crmService.getContacts(true);
-      setContacts(cnts);
-      const validEmails = cnts.filter((c) => c.emailStatus === 'VALID').length;
-      setStats((prev) => ({ ...prev, totalContacts: cnts.length, validEmails }));
+      const safeCnts = Array.isArray(cnts) ? cnts : [];
+      setContacts(safeCnts);
+      const validEmails = safeCnts.filter((c) => c.emailStatus === 'VALID').length;
+      setStats((prev) => ({ ...prev, totalContacts: safeCnts.length, validEmails }));
     } catch (err: any) {
       console.warn('Failed to refresh contacts:', err);
     }
@@ -194,10 +225,11 @@ function MainApp() {
   const refreshLeads = useCallback(async () => {
     try {
       const lds = await crmService.getLeads(true);
-      setLeads(lds);
+      const safeLds = Array.isArray(lds) ? lds : [];
+      setLeads(safeLds);
       let newLeads = 0;
       let interestedLeads = 0;
-      for (const l of lds) {
+      for (const l of safeLds) {
         if (l.leadStatus === 'NEW') newLeads++;
         if (l.leadStatus === 'INTERESTED' || l.leadStatus === 'QUOTATION' || l.leadStatus === 'NEGOTIATION') {
           interestedLeads++;
@@ -212,7 +244,8 @@ function MainApp() {
   const refreshProducts = useCallback(async () => {
     try {
       const prods = await crmService.getProducts(true);
-      setProducts(prods);
+      const safeProds = Array.isArray(prods) ? prods : [];
+      setProducts(safeProds);
     } catch (err: any) {
       console.warn('Failed to refresh products:', err);
     }
@@ -221,11 +254,12 @@ function MainApp() {
   const refreshFollowUps = useCallback(async () => {
     try {
       const fus = await crmService.getFollowUps(true);
-      setFollowUps(fus);
+      const safeFus = Array.isArray(fus) ? fus : [];
+      setFollowUps(safeFus);
       const todayStr = new Date().toISOString().split('T')[0];
       let todayFollowUps = 0;
       let overdueFollowUps = 0;
-      for (const f of fus) {
+      for (const f of safeFus) {
         if (f.status === 'PENDING') {
           if (f.dueDate === todayStr) todayFollowUps++;
           else if (f.dueDate < todayStr) overdueFollowUps++;
@@ -238,15 +272,24 @@ function MainApp() {
   }, []);
 
   const refreshCampaigns = useCallback(async () => {
+    setCampaignsLoading(true);
+    setCampaignsError(null);
     try {
       const camps = await crmService.getCampaigns(true);
-      setCampaigns(camps);
-      const activeCampaigns = camps.filter((c) => c.status === 'RUNNING' || c.status === 'SCHEDULED').length;
-      setStats((prev) => ({ ...prev, activeCampaigns, recentCampaignsCount: camps.length }));
+      const safeCamps = Array.isArray(camps) ? camps : [];
+      setCampaigns(safeCamps);
+      const activeCampaigns = safeCamps.filter((c) => c.status === 'RUNNING' || c.status === 'SCHEDULED').length;
+      setStats((prev) => ({ ...prev, activeCampaigns, recentCampaignsCount: safeCamps.length }));
+      success('Queue Refreshed', `Loaded ${safeCamps.length} outreach campaigns.`);
     } catch (err: any) {
       console.warn('Failed to refresh campaigns:', err);
+      const msg = err?.message || 'Failed to refresh campaigns from Firestore.';
+      setCampaignsError(msg);
+      error('Campaigns Refresh Failed', msg);
+    } finally {
+      setCampaignsLoading(false);
     }
-  }, []);
+  }, [error, success]);
 
   useEffect(() => {
     if (currentUser && isAuthorized) {
@@ -516,7 +559,8 @@ function MainApp() {
             contacts={contacts}
             products={products}
             onRefresh={refreshCampaigns}
-            isLoading={dataLoading}
+            isLoading={dataLoading || campaignsLoading}
+            errorMessage={campaignsError || dataError}
           />
         )}
 

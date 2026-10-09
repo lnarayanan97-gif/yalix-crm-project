@@ -33,6 +33,7 @@ interface CacheEntry<T> {
 }
 
 const CACHE_TTL_MS = 60000; // 60 seconds TTL
+const REQUEST_TIMEOUT_MS = 15000; // 15 seconds network timeout safeguard
 
 const cacheStore = {
   companies: null as CacheEntry<Company[]> | null,
@@ -56,18 +57,30 @@ async function fetchWithCache<T>(
   if (!forceRefresh && (cacheStore as any)[key] && (now - (cacheStore as any)[key].timestamp < CACHE_TTL_MS)) {
     return (cacheStore as any)[key].data as T;
   }
-  if (inFlightRequests.has(key)) {
+  // Only reuse in-flight request if NOT forcing a refresh
+  if (!forceRefresh && inFlightRequests.has(key)) {
     return inFlightRequests.get(key) as Promise<T>;
   }
+
+  // Create a timeout safeguard so stalled Firestore network streams don't hang UI indefinitely
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    setTimeout(() => {
+      reject(new Error(`Firestore request for "${String(key)}" timed out after ${REQUEST_TIMEOUT_MS / 1000}s`));
+    }, REQUEST_TIMEOUT_MS);
+  });
+
   const promise = (async () => {
     try {
-      const data = await fetcher();
-      (cacheStore as any)[key] = { data, timestamp: Date.now() };
+      const data = await Promise.race([fetcher(), timeoutPromise]);
+      if (data !== undefined && data !== null) {
+        (cacheStore as any)[key] = { data, timestamp: Date.now() };
+      }
       return data;
     } finally {
       inFlightRequests.delete(key);
     }
   })();
+
   inFlightRequests.set(key, promise);
   return promise;
 }
@@ -81,6 +94,7 @@ export const crmService = {
       } else {
         (cacheStore as any)[key] = null;
       }
+      inFlightRequests.delete(key);
     } else {
       cacheStore.companies = null;
       cacheStore.contacts = null;
@@ -90,6 +104,7 @@ export const crmService = {
       cacheStore.campaigns = null;
       cacheStore.imports = null;
       cacheStore.activities.clear();
+      inFlightRequests.clear();
     }
   },
 
@@ -576,21 +591,28 @@ export const crmService = {
 
   // --- In-Memory Zero-Firestore-Read Stats Computation Engine ---
   calculateDashboardStats(
-    companies: Company[],
-    contacts: Contact[],
-    leads: Lead[],
-    campaigns: Campaign[],
-    followUps: FollowUp[],
+    companies: Company[] = [],
+    contacts: Contact[] = [],
+    leads: Lead[] = [],
+    campaigns: Campaign[] = [],
+    followUps: FollowUp[] = [],
     recentImportsCount: number = 0
   ): DashboardStats {
+    const safeCompanies = Array.isArray(companies) ? companies : [];
+    const safeContacts = Array.isArray(contacts) ? contacts : [];
+    const safeLeads = Array.isArray(leads) ? leads : [];
+    const safeCampaigns = Array.isArray(campaigns) ? campaigns : [];
+    const safeFollowUps = Array.isArray(followUps) ? followUps : [];
+
     let validEmails = 0;
-    for (const c of contacts) {
-      if (c.emailStatus === 'VALID') validEmails++;
+    for (const c of safeContacts) {
+      if (c && c.emailStatus === 'VALID') validEmails++;
     }
 
     let newLeads = 0;
     let interestedLeads = 0;
-    for (const l of leads) {
+    for (const l of safeLeads) {
+      if (!l) continue;
       if (l.leadStatus === 'NEW') newLeads++;
       if (l.leadStatus === 'INTERESTED' || l.leadStatus === 'QUOTATION' || l.leadStatus === 'NEGOTIATION') {
         interestedLeads++;
@@ -598,7 +620,8 @@ export const crmService = {
     }
 
     let activeCampaigns = 0;
-    for (const camp of campaigns) {
+    for (const camp of safeCampaigns) {
+      if (!camp) continue;
       if (camp.status === 'RUNNING' || camp.status === 'SCHEDULED') activeCampaigns++;
     }
 
@@ -606,27 +629,28 @@ export const crmService = {
     let todayFollowUps = 0;
     let overdueFollowUps = 0;
 
-    for (const fu of followUps) {
+    for (const fu of safeFollowUps) {
+      if (!fu) continue;
       if (fu.status === 'PENDING') {
         if (fu.dueDate === todayStr) {
           todayFollowUps++;
-        } else if (fu.dueDate < todayStr) {
+        } else if (fu.dueDate && fu.dueDate < todayStr) {
           overdueFollowUps++;
         }
       }
     }
 
     return {
-      totalCompanies: companies.length,
-      totalContacts: contacts.length,
+      totalCompanies: safeCompanies.length,
+      totalContacts: safeContacts.length,
       validEmails,
       newLeads,
       interestedLeads,
       activeCampaigns,
       todayFollowUps,
       overdueFollowUps,
-      recentImportsCount,
-      recentCampaignsCount: campaigns.length,
+      recentImportsCount: typeof recentImportsCount === 'number' ? recentImportsCount : 0,
+      recentCampaignsCount: safeCampaigns.length,
     };
   },
 
@@ -701,7 +725,21 @@ export const crmService = {
       try {
         const snap = await getDocs(collection(db, path));
         const list: Campaign[] = [];
-        snap.forEach((d) => list.push(d.data() as Campaign));
+        snap.forEach((d) => {
+          const data = d.data();
+          list.push({
+            ...data,
+            id: data.id || d.id,
+            campaignId: data.campaignId || data.id || d.id,
+            name: data.name || 'Untitled Campaign',
+            subject: data.subject || '',
+            product: data.product || 'General',
+            recipientCount: typeof data.recipientCount === 'number' ? data.recipientCount : 0,
+            status: data.status || 'SCHEDULED',
+            createdAt: data.createdAt || new Date().toISOString(),
+            updatedAt: data.updatedAt || new Date().toISOString(),
+          } as Campaign);
+        });
         return list.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
       } catch (err) {
         handleFirestoreError(err, OperationType.LIST, path);

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, Send, ShieldAlert, CheckCircle2, Clock, Users, AlertTriangle, Layers, Server } from 'lucide-react';
+import { Plus, Send, ShieldAlert, CheckCircle2, Clock, Users, AlertTriangle, Layers, Server, RefreshCw } from 'lucide-react';
 import { Campaign, Contact, Product, CampaignStatus } from '../../../types/crm';
 import { DataTable, Column } from '../../common/DataTable';
 import { Modal } from '../../common/Modal';
@@ -9,34 +9,41 @@ import { useToast } from '../../../context/ToastContext';
 import { crmService } from '../../../services/crmService';
 
 interface CampaignsViewProps {
-  campaigns: Campaign[];
-  contacts: Contact[];
-  products: Product[];
+  campaigns?: Campaign[];
+  contacts?: Contact[];
+  products?: Product[];
   onRefresh: () => void;
-  isLoading: boolean;
+  isLoading?: boolean;
+  errorMessage?: string | null;
 }
 
 export function CampaignsView({
-  campaigns,
-  contacts,
-  products,
+  campaigns = [],
+  contacts = [],
+  products = [],
   onRefresh,
-  isLoading,
+  isLoading = false,
+  errorMessage = null,
 }: CampaignsViewProps) {
   const { currentUser } = useAuth();
   const { success, error } = useToast();
+
+  const safeCampaigns = Array.isArray(campaigns) ? campaigns : [];
+  const safeContacts = Array.isArray(contacts) ? contacts : [];
+  const safeProducts = Array.isArray(products) ? products : [];
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [newCampaign, setNewCampaign] = useState<Partial<Campaign>>({
     name: '',
     subject: '',
-    product: products[0]?.name || '',
+    product: safeProducts[0]?.name || '',
     status: 'DRAFT',
   });
   const [targetCountry, setTargetCountry] = useState('');
 
   // Eligible recipient count with Safety filters enforced
-  const eligibleRecipients = contacts.filter((c) => {
+  const eligibleRecipients = safeContacts.filter((c) => {
+    if (!c) return false;
     // 1. Must be VALID email
     if (c.emailStatus !== 'VALID') return false;
     // 2. Must NOT be unsubscribed or inactive
@@ -173,17 +180,46 @@ export function CampaignsView({
           </div>
         </div>
 
-        <button
-          onClick={() => setIsModalOpen(true)}
-          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs rounded-xl shadow-md transition-colors flex items-center gap-1.5 shrink-0 cursor-pointer"
-        >
-          <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
-          <span>+ Create Campaign</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={isLoading}
+            className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 font-medium text-xs rounded-xl border border-slate-700 transition-colors flex items-center gap-1.5 shrink-0 cursor-pointer"
+            title="Refresh campaigns from Firestore"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+            <span>Refresh Queue</span>
+          </button>
+          <button
+            onClick={() => setIsModalOpen(true)}
+            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs rounded-xl shadow-md transition-colors flex items-center gap-1.5 shrink-0 cursor-pointer"
+          >
+            <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+            <span>+ Create Campaign</span>
+          </button>
+        </div>
       </div>
 
+      {errorMessage && (
+        <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-900 flex items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2.5">
+            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+            <span>{errorMessage}</span>
+          </div>
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={isLoading}
+            className="px-2.5 py-1 text-xs font-semibold text-amber-900 bg-amber-200/80 hover:bg-amber-200 rounded-lg shrink-0 cursor-pointer disabled:opacity-50"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       <DataTable
-        data={campaigns}
+        data={safeCampaigns}
         columns={columns}
         keyField="campaignId"
         searchFields={['name', 'subject', 'product']}
@@ -191,6 +227,8 @@ export function CampaignsView({
         exportFilename="yalix_campaigns"
         isLoading={isLoading}
         emptyMessage="No outreach campaigns created yet."
+        error={errorMessage}
+        onRetry={onRefresh}
       />
 
       {/* Campaign Creation Wizard Modal */}
@@ -288,12 +326,12 @@ export function CampaignsView({
             </div>
             <div className="flex justify-between items-center text-xs pt-1">
               <span>Audience Pool:</span>
-              <strong>{contacts.length} total contacts</strong>
+              <strong>{safeContacts.length} total contacts</strong>
             </div>
             <div className="flex justify-between items-center text-xs">
               <span>Excluded (Unsubscribed/Invalid/Risky):</span>
               <span className="text-rose-700 font-semibold">
-                -{contacts.length - eligibleRecipients.length} excluded
+                -{safeContacts.length - eligibleRecipients.length} excluded
               </span>
             </div>
             <div className="flex justify-between items-center text-xs font-bold pt-1 border-t border-emerald-200">

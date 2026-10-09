@@ -7,6 +7,8 @@ import {
   ChevronRight,
   Download,
   Search,
+  AlertTriangle,
+  RefreshCw,
 } from 'lucide-react';
 import { generateCsvString, downloadCsvFile, ExportColumnDef } from '../../utils/csvExport';
 
@@ -20,7 +22,7 @@ export interface Column<T> {
 }
 
 interface DataTableProps<T> {
-  data: T[];
+  data?: T[];
   columns: Column<T>[];
   keyField: keyof T;
   searchFields?: (keyof T)[];
@@ -31,10 +33,12 @@ interface DataTableProps<T> {
   isLoading?: boolean;
   emptyMessage?: string;
   initialPageSize?: number;
+  error?: string | null;
+  onRetry?: () => void;
 }
 
 export function DataTable<T extends Record<string, any>>({
-  data,
+  data = [],
   columns,
   keyField,
   searchFields = [],
@@ -45,6 +49,8 @@ export function DataTable<T extends Record<string, any>>({
   isLoading = false,
   emptyMessage = 'No records found',
   initialPageSize = 10,
+  error = null,
+  onRetry,
 }: DataTableProps<T>) {
   const [search, setSearch] = useState('');
   const [sortKey, setSortKey] = useState<string | null>(null);
@@ -53,12 +59,17 @@ export function DataTable<T extends Record<string, any>>({
   const [pageSize, setPageSize] = useState(initialPageSize);
   const [selectedKeys, setSelectedKeys] = useState<Set<any>>(new Set());
 
+  // Defensive array fallback preventing crashes on undefined data
+  const safeData = useMemo(() => (Array.isArray(data) ? data : []), [data]);
+
   // Search filtering
   const filteredData = useMemo(() => {
-    if (!search.trim()) return data;
+    if (!safeData || safeData.length === 0) return [];
+    if (!search.trim()) return safeData;
     const lower = search.toLowerCase().trim();
-    return data.filter((item) => {
-      if (searchFields.length > 0) {
+    return safeData.filter((item) => {
+      if (!item) return false;
+      if (searchFields && searchFields.length > 0) {
         return searchFields.some((field) => {
           const val = item[field];
           return val != null && String(val).toLowerCase().includes(lower);
@@ -68,10 +79,11 @@ export function DataTable<T extends Record<string, any>>({
         (val) => val != null && String(val).toLowerCase().includes(lower)
       );
     });
-  }, [data, search, searchFields]);
+  }, [safeData, search, searchFields]);
 
   // Sorting
   const sortedData = useMemo(() => {
+    if (!Array.isArray(filteredData) || filteredData.length === 0) return [];
     if (!sortKey) return filteredData;
     return [...filteredData].sort((a, b) => {
       const valA = a[sortKey];
@@ -90,9 +102,10 @@ export function DataTable<T extends Record<string, any>>({
   }, [filteredData, sortKey, sortDirection]);
 
   // Pagination
-  const totalPages = Math.max(1, Math.ceil(sortedData.length / pageSize));
+  const totalPages = Math.max(1, Math.ceil((sortedData?.length || 0) / pageSize));
   const currentPage = Math.min(page, totalPages);
   const paginatedData = useMemo(() => {
+    if (!Array.isArray(sortedData) || sortedData.length === 0) return [];
     const start = (currentPage - 1) * pageSize;
     return sortedData.slice(start, start + pageSize);
   }, [sortedData, currentPage, pageSize]);
@@ -291,7 +304,32 @@ export function DataTable<T extends Record<string, any>>({
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {paginatedData.length === 0 ? (
+            {error && !isLoading ? (
+              <tr>
+                <td
+                  colSpan={columns.length + (onSelect ? 1 : 0)}
+                  className="py-12 text-center text-slate-500"
+                >
+                  <div className="flex flex-col items-center justify-center gap-2 max-w-md mx-auto">
+                    <div className="w-10 h-10 rounded-full bg-rose-50 border border-rose-200 text-rose-500 flex items-center justify-center">
+                      <AlertTriangle className="w-5 h-5" />
+                    </div>
+                    <p className="text-sm font-semibold text-slate-800">Failed to load records</p>
+                    <p className="text-xs text-slate-500 text-center leading-relaxed">{error}</p>
+                    {onRetry && (
+                      <button
+                        type="button"
+                        onClick={onRetry}
+                        className="mt-2 px-3.5 py-1.5 text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        <span>Retry Loading</span>
+                      </button>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            ) : paginatedData.length === 0 ? (
               <tr>
                 <td
                   colSpan={columns.length + (onSelect ? 1 : 0)}
