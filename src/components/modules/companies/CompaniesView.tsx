@@ -1,20 +1,43 @@
 import React, { useState } from 'react';
-import { Plus, Building2, Globe, MapPin, Trash2, Edit, ExternalLink, Calendar } from 'lucide-react';
-import { Company } from '../../../types/crm';
+import {
+  Plus,
+  Building2,
+  Globe,
+  MapPin,
+  Trash2,
+  Edit,
+  ExternalLink,
+  Eye,
+  Users,
+} from 'lucide-react';
+import { Company, Contact } from '../../../types/crm';
 import { DataTable, Column } from '../../common/DataTable';
 import { Modal } from '../../common/Modal';
 import { Badge } from '../../common/Badge';
 import { useAuth } from '../../../context/AuthContext';
 import { useToast } from '../../../context/ToastContext';
 import { crmService } from '../../../services/crmService';
+import { CompanyDetailsView } from './CompanyDetailsView';
 
 interface CompaniesViewProps {
   companies: Company[];
+  contacts?: Contact[];
   onRefresh: () => void;
   isLoading: boolean;
+  selectedCompanyId?: string | null;
+  onSelectCompany?: (companyId: string | null) => void;
+  onSelectContact?: (contactId: string) => void;
 }
 
-export function CompaniesView({ companies, onRefresh, isLoading }: CompaniesViewProps) {
+export function CompaniesView({
+  companies,
+  contacts = [],
+  onRefresh,
+  isLoading,
+  selectedCompanyId,
+  onSelectCompany,
+  onSelectContact,
+}: CompaniesViewProps) {
   const { currentUser, isAdmin } = useAuth();
   const { success, error } = useToast();
 
@@ -22,19 +45,45 @@ export function CompaniesView({ companies, onRefresh, isLoading }: CompaniesView
   const [editingCompany, setEditingCompany] = useState<Partial<Company> | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
+  // Quick Add Contact modal from company view
+  const [isAddContactModalOpen, setIsAddContactModalOpen] = useState(false);
+  const [newContactData, setNewContactData] = useState<{
+    firstName: string;
+    lastName: string;
+    businessEmail: string;
+    jobTitle: string;
+    phone: string;
+    country: string;
+  }>({
+    firstName: '',
+    lastName: '',
+    businessEmail: '',
+    jobTitle: '',
+    phone: '',
+    country: '',
+  });
+
   // Filter state
   const [countryFilter, setCountryFilter] = useState('');
   const [industryFilter, setIndustryFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
 
-  // Extract unique countries and industries
+  // Extract unique filters
   const countries = Array.from(new Set(companies.map((c) => c.country).filter(Boolean))) as string[];
   const industries = Array.from(new Set(companies.map((c) => c.industry).filter(Boolean))) as string[];
+  const statuses = Array.from(new Set(companies.map((c) => c.status).filter(Boolean))) as string[];
 
   const filteredCompanies = companies.filter((c) => {
     if (countryFilter && c.country !== countryFilter) return false;
     if (industryFilter && c.industry !== industryFilter) return false;
+    if (statusFilter && c.status !== statusFilter) return false;
     return true;
   });
+
+  // Check if viewing details of a specific company
+  const activeCompany = selectedCompanyId
+    ? companies.find((c) => c.companyId === selectedCompanyId)
+    : null;
 
   const handleOpenAdd = () => {
     setEditingCompany({
@@ -49,6 +98,7 @@ export function CompaniesView({ companies, onRefresh, isLoading }: CompaniesView
       revenue: '',
       linkedinUrl: '',
       source: '',
+      sourceDate: new Date().toISOString().split('T')[0],
       status: 'ACTIVE_PROSPECT',
       notes: '',
     });
@@ -61,10 +111,13 @@ export function CompaniesView({ companies, onRefresh, isLoading }: CompaniesView
   };
 
   const handleDelete = async (comp: Company) => {
-    if (!confirm(`Are you sure you want to delete ${comp.companyName}?`)) return;
+    if (!confirm(`Are you sure you want to delete ${comp.companyName}? This action cannot be undone.`)) return;
     try {
       await crmService.deleteCompany(comp.companyId, currentUser?.uid || 'admin', currentUser?.email || undefined);
       success('Company Deleted', `${comp.companyName} was removed from the database.`);
+      if (selectedCompanyId === comp.companyId && onSelectCompany) {
+        onSelectCompany(null);
+      }
       onRefresh();
     } catch (err: any) {
       error('Delete Failed', err.message);
@@ -78,17 +131,32 @@ export function CompaniesView({ companies, onRefresh, isLoading }: CompaniesView
       return;
     }
 
+    const trimmedName = editingCompany.companyName.trim();
+
+    // Prevent accidental duplicate company name check
+    const isNew = !editingCompany.companyId;
+    if (isNew) {
+      const duplicate = companies.find(
+        (c) => c.companyName.trim().toLowerCase() === trimmedName.toLowerCase()
+      );
+      if (duplicate) {
+        if (!confirm(`A company with the name "${trimmedName}" already exists. Do you still want to create another record?`)) {
+          return;
+        }
+      }
+    }
+
     setIsSaving(true);
     try {
       await crmService.saveCompany(
         {
           ...editingCompany,
-          companyName: editingCompany.companyName.trim(),
+          companyName: trimmedName,
         } as any,
         currentUser?.uid || 'user',
         currentUser?.email || undefined
       );
-      success('Company Saved', `${editingCompany.companyName} has been recorded.`);
+      success('Company Saved', `${trimmedName} has been recorded.`);
       setIsModalOpen(false);
       setEditingCompany(null);
       onRefresh();
@@ -99,6 +167,345 @@ export function CompaniesView({ companies, onRefresh, isLoading }: CompaniesView
     }
   };
 
+  // Handle adding contact directly to active company
+  const handleSaveContactToCompany = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeCompany) return;
+    if (!newContactData.firstName.trim() || !newContactData.businessEmail.trim()) {
+      error('Validation Error', 'First Name and Business Email are required.');
+      return;
+    }
+
+    const emailLower = newContactData.businessEmail.trim().toLowerCase();
+
+    // Prevent duplicate contacts
+    const duplicate = contacts.find((c) => c.businessEmail.trim().toLowerCase() === emailLower);
+    if (duplicate) {
+      error(
+        'Duplicate Contact Detected',
+        `A contact with email "${emailLower}" already exists (${duplicate.firstName} ${duplicate.lastName || ''}).`
+      );
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      await crmService.saveContact(
+        {
+          firstName: newContactData.firstName.trim(),
+          lastName: newContactData.lastName.trim(),
+          businessEmail: emailLower,
+          jobTitle: newContactData.jobTitle.trim(),
+          phone: newContactData.phone.trim(),
+          country: newContactData.country.trim() || activeCompany.country,
+          companyId: activeCompany.companyId,
+          companyName: activeCompany.companyName,
+          emailStatus: 'VALID',
+          contactStatus: 'ACTIVE',
+        },
+        currentUser?.uid || 'user',
+        currentUser?.email || undefined
+      );
+      success('Contact Added', `${newContactData.firstName} linked to ${activeCompany.companyName}`);
+      setIsAddContactModalOpen(false);
+      setNewContactData({
+        firstName: '',
+        lastName: '',
+        businessEmail: '',
+        jobTitle: '',
+        phone: '',
+        country: '',
+      });
+      onRefresh();
+    } catch (err: any) {
+      error('Save Failed', err.message);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // If a specific company is selected, render Company Details View
+  if (activeCompany) {
+    const relatedContacts = contacts.filter((c) => c.companyId === activeCompany.companyId);
+    return (
+      <>
+        <CompanyDetailsView
+          company={activeCompany}
+          relatedContacts={relatedContacts}
+          onBack={() => onSelectCompany && onSelectCompany(null)}
+          onEdit={() => handleOpenEdit(activeCompany)}
+          onDelete={() => handleDelete(activeCompany)}
+          onSelectContact={(contactId) => onSelectContact && onSelectContact(contactId)}
+          onAddContact={() => {
+            setNewContactData({
+              firstName: '',
+              lastName: '',
+              businessEmail: '',
+              jobTitle: '',
+              phone: '',
+              country: activeCompany.country || '',
+            });
+            setIsAddContactModalOpen(true);
+          }}
+        />
+
+        {/* Edit Company Modal */}
+        <Modal
+          isOpen={isModalOpen}
+          onClose={() => setIsModalOpen(false)}
+          title="Edit Company Record"
+          description="Maintain authorized company profile, location, and industry."
+          maxWidth="2xl"
+          footer={
+            <>
+              <button
+                type="button"
+                onClick={() => setIsModalOpen(false)}
+                className="px-4 py-2 text-xs font-medium text-slate-600 hover:text-slate-800 rounded-xl hover:bg-slate-100 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                form="company-edit-form"
+                type="submit"
+                disabled={isSaving}
+                className="px-4 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-xs transition-colors disabled:opacity-60"
+              >
+                {isSaving ? 'Saving...' : 'Update Company'}
+              </button>
+            </>
+          }
+        >
+          <form id="company-edit-form" onSubmit={handleSave} className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Company Name <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editingCompany?.companyName || ''}
+                  onChange={(e) =>
+                    setEditingCompany({ ...editingCompany, companyName: e.target.value })
+                  }
+                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Website / Domain</label>
+                <input
+                  type="text"
+                  value={editingCompany?.website || ''}
+                  onChange={(e) =>
+                    setEditingCompany({ ...editingCompany, website: e.target.value })
+                  }
+                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Industry</label>
+                <input
+                  type="text"
+                  value={editingCompany?.industry || ''}
+                  onChange={(e) =>
+                    setEditingCompany({ ...editingCompany, industry: e.target.value })
+                  }
+                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Status</label>
+                <select
+                  value={editingCompany?.status || 'ACTIVE_PROSPECT'}
+                  onChange={(e) =>
+                    setEditingCompany({ ...editingCompany, status: e.target.value })
+                  }
+                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl"
+                >
+                  <option value="ACTIVE_PROSPECT">Active Prospect</option>
+                  <option value="CUSTOMER">Customer</option>
+                  <option value="PARTNER">Partner</option>
+                  <option value="CHURNED">Churned</option>
+                  <option value="INACTIVE">Inactive</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Country</label>
+                <input
+                  type="text"
+                  value={editingCompany?.country || ''}
+                  onChange={(e) =>
+                    setEditingCompany({ ...editingCompany, country: e.target.value })
+                  }
+                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">City</label>
+                <input
+                  type="text"
+                  value={editingCompany?.city || ''}
+                  onChange={(e) =>
+                    setEditingCompany({ ...editingCompany, city: e.target.value })
+                  }
+                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">State / Region</label>
+                <input
+                  type="text"
+                  value={editingCompany?.state || ''}
+                  onChange={(e) =>
+                    setEditingCompany({ ...editingCompany, state: e.target.value })
+                  }
+                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Company Size</label>
+                <input
+                  type="text"
+                  value={editingCompany?.companySize || ''}
+                  onChange={(e) =>
+                    setEditingCompany({ ...editingCompany, companySize: e.target.value })
+                  }
+                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Revenue</label>
+                <input
+                  type="text"
+                  value={editingCompany?.revenue || ''}
+                  onChange={(e) =>
+                    setEditingCompany({ ...editingCompany, revenue: e.target.value })
+                  }
+                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl"
+                />
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Notes</label>
+                <textarea
+                  rows={3}
+                  value={editingCompany?.notes || ''}
+                  onChange={(e) =>
+                    setEditingCompany({ ...editingCompany, notes: e.target.value })
+                  }
+                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl"
+                />
+              </div>
+            </div>
+          </form>
+        </Modal>
+
+        {/* Add Contact directly to company */}
+        <Modal
+          isOpen={isAddContactModalOpen}
+          onClose={() => setIsAddContactModalOpen(false)}
+          title={`Add Decision Maker to ${activeCompany.companyName}`}
+          description="Create a new contact directly linked to this authorized organization."
+          maxWidth="lg"
+          footer={
+            <>
+              <button
+                type="button"
+                onClick={() => setIsAddContactModalOpen(false)}
+                className="px-4 py-2 text-xs font-medium text-slate-600 hover:text-slate-800 rounded-xl hover:bg-slate-100 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                form="direct-contact-form"
+                type="submit"
+                disabled={isSaving}
+                className="px-4 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-xs transition-colors disabled:opacity-60"
+              >
+                {isSaving ? 'Linking...' : 'Add Contact'}
+              </button>
+            </>
+          }
+        >
+          <form id="direct-contact-form" onSubmit={handleSaveContactToCompany} className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  First Name <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  required
+                  type="text"
+                  value={newContactData.firstName}
+                  onChange={(e) => setNewContactData({ ...newContactData, firstName: e.target.value })}
+                  placeholder="e.g. Klaus"
+                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Last Name</label>
+                <input
+                  type="text"
+                  value={newContactData.lastName}
+                  onChange={(e) => setNewContactData({ ...newContactData, lastName: e.target.value })}
+                  placeholder="e.g. Weber"
+                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                Business Email <span className="text-rose-500">*</span>
+              </label>
+              <input
+                required
+                type="email"
+                value={newContactData.businessEmail}
+                onChange={(e) => setNewContactData({ ...newContactData, businessEmail: e.target.value })}
+                placeholder="klaus.weber@company.de"
+                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl font-mono"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Job Title</label>
+                <input
+                  type="text"
+                  value={newContactData.jobTitle}
+                  onChange={(e) => setNewContactData({ ...newContactData, jobTitle: e.target.value })}
+                  placeholder="e.g. Head of Procurement"
+                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Phone</label>
+                <input
+                  type="text"
+                  value={newContactData.phone}
+                  onChange={(e) => setNewContactData({ ...newContactData, phone: e.target.value })}
+                  placeholder="+49 89 123456"
+                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl"
+                />
+              </div>
+            </div>
+          </form>
+        </Modal>
+      </>
+    );
+  }
+
+  // Columns for the Companies listing table
   const columns: Column<Company>[] = [
     {
       key: 'companyName',
@@ -106,10 +513,13 @@ export function CompaniesView({ companies, onRefresh, isLoading }: CompaniesView
       sortable: true,
       render: (item) => (
         <div className="flex flex-col">
-          <span className="font-semibold text-slate-900 flex items-center gap-1.5">
-            <Building2 className="w-3.5 h-3.5 text-slate-400" />
-            {item.companyName}
-          </span>
+          <button
+            onClick={() => onSelectCompany && onSelectCompany(item.companyId)}
+            className="font-semibold text-slate-900 hover:text-emerald-700 text-left flex items-center gap-1.5 transition-colors"
+          >
+            <Building2 className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+            <span>{item.companyName}</span>
+          </button>
           {item.website && (
             <a
               href={item.website.startsWith('http') ? item.website : `https://${item.website}`}
@@ -152,10 +562,24 @@ export function CompaniesView({ companies, onRefresh, isLoading }: CompaniesView
       sortable: true,
       render: (item) => (
         <div className="flex flex-col text-xs text-slate-600">
-          <span>{item.companySize ? `${item.companySize} emp` : '—'}</span>
+          <span>{item.companySize ? `${item.companySize}` : '—'}</span>
           {item.revenue && <span className="text-[11px] text-slate-400">{item.revenue}</span>}
         </div>
       ),
+    },
+    {
+      key: 'contactsCount',
+      label: 'Contacts',
+      sortable: false,
+      render: (item) => {
+        const count = contacts.filter((c) => c.companyId === item.companyId).length;
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-700">
+            <Users className="w-3 h-3 text-slate-400" />
+            {count}
+          </span>
+        );
+      },
     },
     {
       key: 'source',
@@ -163,6 +587,26 @@ export function CompaniesView({ companies, onRefresh, isLoading }: CompaniesView
       sortable: true,
       render: (item) => (
         <Badge variant="slate">{item.source || 'Direct'}</Badge>
+      ),
+    },
+    {
+      key: 'sourceDate',
+      label: 'Source Date',
+      sortable: true,
+      render: (item) => (
+        <span className="text-[11px] text-slate-500 font-mono">
+          {item.sourceDate || (item.createdAt ? item.createdAt.split('T')[0] : '—')}
+        </span>
+      ),
+    },
+    {
+      key: 'companyId',
+      label: 'Company ID',
+      sortable: true,
+      render: (item) => (
+        <span className="text-[10px] font-mono text-slate-400 truncate max-w-[90px] block" title={item.companyId}>
+          {item.companyId}
+        </span>
       ),
     },
     {
@@ -182,6 +626,13 @@ export function CompaniesView({ companies, onRefresh, isLoading }: CompaniesView
       align: 'right',
       render: (item) => (
         <div className="flex items-center justify-end gap-1">
+          <button
+            onClick={() => onSelectCompany && onSelectCompany(item.companyId)}
+            className="p-1.5 text-slate-500 hover:text-emerald-700 hover:bg-slate-100 rounded-lg transition-colors"
+            title="View company details"
+          >
+            <Eye className="w-3.5 h-3.5" />
+          </button>
           <button
             onClick={() => handleOpenEdit(item)}
             className="p-1.5 text-slate-500 hover:text-emerald-700 hover:bg-slate-100 rounded-lg transition-colors"
@@ -237,11 +688,26 @@ export function CompaniesView({ companies, onRefresh, isLoading }: CompaniesView
               ))}
             </select>
           )}
-          {(countryFilter || industryFilter) && (
+          {statuses.length > 0 && (
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="text-xs bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-slate-700 focus:outline-none focus:border-emerald-600"
+            >
+              <option value="">All Statuses ({statuses.length})</option>
+              {statuses.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+          )}
+          {(countryFilter || industryFilter || statusFilter) && (
             <button
               onClick={() => {
                 setCountryFilter('');
                 setIndustryFilter('');
+                setStatusFilter('');
               }}
               className="text-xs text-rose-600 hover:underline px-2 font-medium"
             >
@@ -259,13 +725,13 @@ export function CompaniesView({ companies, onRefresh, isLoading }: CompaniesView
         </button>
       </div>
 
-      {/* Reusable Data Table */}
+      {/* Reusable Data Table with Sorting, Pagination, and Search */}
       <DataTable
         data={filteredCompanies}
         columns={columns}
         keyField="companyId"
-        searchFields={['companyName', 'website', 'country', 'city', 'industry', 'notes']}
-        searchPlaceholder="Search by company name, country, industry, notes..."
+        searchFields={['companyName', 'website', 'country', 'city', 'state', 'industry', 'notes', 'status']}
+        searchPlaceholder="Search by company name, website, country, industry, notes..."
         exportFilename="yalix_companies"
         isLoading={isLoading}
         emptyMessage="No company records in YALIX database yet."
@@ -317,14 +783,14 @@ export function CompaniesView({ companies, onRefresh, isLoading }: CompaniesView
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Website</label>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Website / Domain</label>
               <input
                 type="text"
                 value={editingCompany?.website || ''}
                 onChange={(e) =>
                   setEditingCompany({ ...editingCompany, website: e.target.value })
                 }
-                placeholder="e.g. https://company.com"
+                placeholder="e.g. nutranordic.com"
                 className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600"
               />
             </div>
@@ -337,9 +803,26 @@ export function CompaniesView({ companies, onRefresh, isLoading }: CompaniesView
                 onChange={(e) =>
                   setEditingCompany({ ...editingCompany, industry: e.target.value })
                 }
-                placeholder="e.g. Nutraceuticals, Food Ingredients, Minerals"
+                placeholder="e.g. Nutraceuticals, Botanicals, Health"
                 className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600"
               />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Status</label>
+              <select
+                value={editingCompany?.status || 'ACTIVE_PROSPECT'}
+                onChange={(e) =>
+                  setEditingCompany({ ...editingCompany, status: e.target.value })
+                }
+                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600"
+              >
+                <option value="ACTIVE_PROSPECT">Active Prospect</option>
+                <option value="CUSTOMER">Customer</option>
+                <option value="PARTNER">Partner</option>
+                <option value="CHURNED">Churned</option>
+                <option value="INACTIVE">Inactive</option>
+              </select>
             </div>
 
             <div>
@@ -364,6 +847,19 @@ export function CompaniesView({ companies, onRefresh, isLoading }: CompaniesView
                   setEditingCompany({ ...editingCompany, city: e.target.value })
                 }
                 placeholder="e.g. Munich"
+                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">State / Province</label>
+              <input
+                type="text"
+                value={editingCompany?.state || ''}
+                onChange={(e) =>
+                  setEditingCompany({ ...editingCompany, state: e.target.value })
+                }
+                placeholder="e.g. Bavaria"
                 className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600"
               />
             </div>
@@ -408,7 +904,19 @@ export function CompaniesView({ companies, onRefresh, isLoading }: CompaniesView
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">LinkedIn URL</label>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Source Date</label>
+              <input
+                type="date"
+                value={editingCompany?.sourceDate || ''}
+                onChange={(e) =>
+                  setEditingCompany({ ...editingCompany, sourceDate: e.target.value })
+                }
+                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">LinkedIn Profile</label>
               <input
                 type="text"
                 value={editingCompany?.linkedinUrl || ''}
@@ -421,7 +929,7 @@ export function CompaniesView({ companies, onRefresh, isLoading }: CompaniesView
             </div>
 
             <div className="sm:col-span-2">
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Address</label>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Street Address</label>
               <input
                 type="text"
                 value={editingCompany?.address || ''}

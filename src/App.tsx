@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, Suspense } from 'react';
 import { AlertCircle, RefreshCw } from 'lucide-react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ToastProvider, useToast } from './context/ToastContext';
@@ -7,19 +7,41 @@ import { AccessDeniedView } from './components/auth/AccessDeniedView';
 import { ApplicationShell } from './components/layout/ApplicationShell';
 import { NavTab } from './components/layout/Sidebar';
 import { DashboardView } from './components/dashboard/DashboardView';
-import { CompaniesView } from './components/modules/companies/CompaniesView';
-import { ContactsView } from './components/modules/contacts/ContactsView';
-import { LeadsView } from './components/modules/leads/LeadsView';
-import { ProductsView } from './components/modules/products/ProductsView';
-import { FollowUpsView } from './components/modules/followups/FollowUpsView';
-import { ImportWizardView } from './components/modules/import/ImportWizardView';
-import { TemplatesView } from './components/modules/templates/TemplatesView';
-import { CampaignsView } from './components/modules/campaigns/CampaignsView';
-import { ReportsView } from './components/modules/reports/ReportsView';
-import { SettingsView } from './components/modules/settings/SettingsView';
 import { Modal } from './components/common/Modal';
 import { LoadingSpinner } from './components/common/LoadingSpinner';
 import { YalixWordmark } from './components/common/YalixWordmark';
+
+// Code-split modular views to shrink initial bundle and boost navigation speed
+const CompaniesView = React.lazy(() =>
+  import('./components/modules/companies/CompaniesView').then((m) => ({ default: m.CompaniesView }))
+);
+const ContactsView = React.lazy(() =>
+  import('./components/modules/contacts/ContactsView').then((m) => ({ default: m.ContactsView }))
+);
+const LeadsView = React.lazy(() =>
+  import('./components/modules/leads/LeadsView').then((m) => ({ default: m.LeadsView }))
+);
+const ProductsView = React.lazy(() =>
+  import('./components/modules/products/ProductsView').then((m) => ({ default: m.ProductsView }))
+);
+const FollowUpsView = React.lazy(() =>
+  import('./components/modules/followups/FollowUpsView').then((m) => ({ default: m.FollowUpsView }))
+);
+const ImportWizardView = React.lazy(() =>
+  import('./components/modules/import/ImportWizardView').then((m) => ({ default: m.ImportWizardView }))
+);
+const TemplatesView = React.lazy(() =>
+  import('./components/modules/templates/TemplatesView').then((m) => ({ default: m.TemplatesView }))
+);
+const CampaignsView = React.lazy(() =>
+  import('./components/modules/campaigns/CampaignsView').then((m) => ({ default: m.CampaignsView }))
+);
+const ReportsView = React.lazy(() =>
+  import('./components/modules/reports/ReportsView').then((m) => ({ default: m.ReportsView }))
+);
+const SettingsView = React.lazy(() =>
+  import('./components/modules/settings/SettingsView').then((m) => ({ default: m.SettingsView }))
+);
 
 import {
   Company,
@@ -32,7 +54,6 @@ import {
 } from './types/crm';
 import { crmService } from './services/crmService';
 import { ensureYalixProducts, seedSampleCRMData } from './services/seedService';
-import { testConnection } from './firebase/config';
 
 function MainApp() {
   const {
@@ -46,6 +67,32 @@ function MainApp() {
 
   const [currentTab, setCurrentTab] = useState<NavTab>('dashboard');
   const [globalSearch, setGlobalSearch] = useState('');
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(null);
+  const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
+
+  const handleSelectCompany = (id: string | null) => {
+    setSelectedCompanyId(id);
+    if (id) {
+      setCurrentTab('companies');
+    }
+  };
+
+  const handleSelectContact = (id: string | null) => {
+    setSelectedContactId(id);
+    if (id) {
+      setCurrentTab('contacts');
+    }
+  };
+
+  const handleTabChange = (tab: NavTab) => {
+    setCurrentTab(tab);
+    if (tab === 'companies') {
+      setSelectedCompanyId(null);
+    }
+    if (tab === 'contacts') {
+      setSelectedContactId(null);
+    }
+  };
 
   // Data states
   const [companies, setCompanies] = useState<Company[]>([]);
@@ -79,22 +126,19 @@ function MainApp() {
   const [newLead, setNewLead] = useState({ companyId: '', contactId: '', productInterest: '', leadStatus: 'NEW' as const, priority: 'HIGH' as const, notes: '' });
   const [newFollowUp, setNewFollowUp] = useState({ title: '', dueDate: new Date().toISOString().split('T')[0], priority: 'HIGH' as const, note: '', companyId: '' });
 
-  // Load all CRM data
+  // Optimized full CRM sync (Deduplicated, zero-redundant-read, zero-unnecessary-testConnection)
   const loadCRMData = useCallback(async () => {
     if (!currentUser || !isAuthorized) return;
     setDataLoading(true);
     try {
-      // Test server connection as per skill
-      await testConnection();
-
-      const [comps, cnts, lds, prods, fus, camps, dashboardStats] = await Promise.all([
+      const [comps, cnts, lds, prods, fus, camps, imps] = await Promise.all([
         crmService.getCompanies(),
         crmService.getContacts(),
         crmService.getLeads(),
         crmService.getProducts(),
         crmService.getFollowUps(),
         crmService.getCampaigns(),
-        crmService.getDashboardStats(),
+        crmService.getImports(),
       ]);
 
       setCompanies(comps);
@@ -103,12 +147,15 @@ function MainApp() {
       setProducts(prods);
       setFollowUps(fus);
       setCampaigns(camps);
+
+      // Instant in-memory zero-read stats calculation
+      const dashboardStats = crmService.calculateDashboardStats(comps, cnts, lds, camps, fus, imps.length);
       setStats(dashboardStats);
 
       // Auto-initialize standard YALIX catalog if empty
       if (prods.length === 0) {
         await ensureYalixProducts(currentUser.uid);
-        const refreshedProds = await crmService.getProducts();
+        const refreshedProds = await crmService.getProducts(true);
         setProducts(refreshedProds);
       }
     } catch (err: any) {
@@ -117,6 +164,89 @@ function MainApp() {
       setDataLoading(false);
     }
   }, [currentUser, isAuthorized]);
+
+  // Targeted granular refreshes to avoid re-fetching the entire database on single CRUD saves
+  const refreshCompanies = useCallback(async () => {
+    try {
+      const comps = await crmService.getCompanies(true);
+      setCompanies(comps);
+      setStats((prev) => ({ ...prev, totalCompanies: comps.length }));
+    } catch (err: any) {
+      console.warn('Failed to refresh companies:', err);
+    }
+  }, []);
+
+  const refreshContacts = useCallback(async () => {
+    try {
+      const cnts = await crmService.getContacts(true);
+      setContacts(cnts);
+      const validEmails = cnts.filter((c) => c.emailStatus === 'VALID').length;
+      setStats((prev) => ({ ...prev, totalContacts: cnts.length, validEmails }));
+    } catch (err: any) {
+      console.warn('Failed to refresh contacts:', err);
+    }
+  }, []);
+
+  const refreshCompaniesAndContacts = useCallback(async () => {
+    await Promise.all([refreshCompanies(), refreshContacts()]);
+  }, [refreshCompanies, refreshContacts]);
+
+  const refreshLeads = useCallback(async () => {
+    try {
+      const lds = await crmService.getLeads(true);
+      setLeads(lds);
+      let newLeads = 0;
+      let interestedLeads = 0;
+      for (const l of lds) {
+        if (l.leadStatus === 'NEW') newLeads++;
+        if (l.leadStatus === 'INTERESTED' || l.leadStatus === 'QUOTATION' || l.leadStatus === 'NEGOTIATION') {
+          interestedLeads++;
+        }
+      }
+      setStats((prev) => ({ ...prev, newLeads, interestedLeads }));
+    } catch (err: any) {
+      console.warn('Failed to refresh leads:', err);
+    }
+  }, []);
+
+  const refreshProducts = useCallback(async () => {
+    try {
+      const prods = await crmService.getProducts(true);
+      setProducts(prods);
+    } catch (err: any) {
+      console.warn('Failed to refresh products:', err);
+    }
+  }, []);
+
+  const refreshFollowUps = useCallback(async () => {
+    try {
+      const fus = await crmService.getFollowUps(true);
+      setFollowUps(fus);
+      const todayStr = new Date().toISOString().split('T')[0];
+      let todayFollowUps = 0;
+      let overdueFollowUps = 0;
+      for (const f of fus) {
+        if (f.status === 'PENDING') {
+          if (f.dueDate === todayStr) todayFollowUps++;
+          else if (f.dueDate < todayStr) overdueFollowUps++;
+        }
+      }
+      setStats((prev) => ({ ...prev, todayFollowUps, overdueFollowUps }));
+    } catch (err: any) {
+      console.warn('Failed to refresh follow-ups:', err);
+    }
+  }, []);
+
+  const refreshCampaigns = useCallback(async () => {
+    try {
+      const camps = await crmService.getCampaigns(true);
+      setCampaigns(camps);
+      const activeCampaigns = camps.filter((c) => c.status === 'RUNNING' || c.status === 'SCHEDULED').length;
+      setStats((prev) => ({ ...prev, activeCampaigns, recentCampaignsCount: camps.length }));
+    } catch (err: any) {
+      console.warn('Failed to refresh campaigns:', err);
+    }
+  }, []);
 
   useEffect(() => {
     if (currentUser && isAuthorized) {
@@ -131,6 +261,7 @@ function MainApp() {
       await ensureYalixProducts(currentUser.uid);
       await seedSampleCRMData(currentUser.uid);
       success('Database Seeded', 'Sample YALIX companies, contacts, leads and follow-ups loaded into Firestore.');
+      crmService.clearCache();
       await loadCRMData();
     } catch (err: any) {
       error('Seeding Failed', err.message);
@@ -139,7 +270,7 @@ function MainApp() {
     }
   };
 
-  // Quick action submits
+  // Quick action submits with targeted single-collection refresh
   const handleSaveQuickCompany = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCompany.companyName.trim()) return;
@@ -148,7 +279,7 @@ function MainApp() {
       success('Company Created', newCompany.companyName);
       setQuickActionModal(null);
       setNewCompany({ companyName: '', country: '', industry: '', website: '' });
-      loadCRMData();
+      refreshCompanies();
     } catch (err: any) {
       error('Create Failed', err.message);
     }
@@ -157,11 +288,18 @@ function MainApp() {
   const handleSaveQuickContact = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newContact.firstName.trim() || !newContact.businessEmail.trim()) return;
+    const cleanEmail = newContact.businessEmail.trim().toLowerCase();
+    const duplicate = contacts.find((c) => c.businessEmail.trim().toLowerCase() === cleanEmail);
+    if (duplicate) {
+      error('Duplicate Contact Detected', `Contact with email "${cleanEmail}" already exists (${duplicate.firstName} ${duplicate.lastName || ''}).`);
+      return;
+    }
     try {
       const parentCo = companies.find((c) => c.companyId === newContact.companyId);
       await crmService.saveContact(
         {
           ...newContact,
+          businessEmail: cleanEmail,
           companyName: parentCo?.companyName,
           emailStatus: 'VALID',
           contactStatus: 'ACTIVE',
@@ -169,10 +307,10 @@ function MainApp() {
         currentUser?.uid || 'user',
         currentUser?.email || undefined
       );
-      success('Contact Created', `${newContact.firstName} (${newContact.businessEmail})`);
+      success('Contact Created', `${newContact.firstName} (${cleanEmail})`);
       setQuickActionModal(null);
       setNewContact({ firstName: '', lastName: '', businessEmail: '', companyId: '', phone: '' });
-      loadCRMData();
+      refreshContacts();
     } catch (err: any) {
       error('Create Failed', err.message);
     }
@@ -195,7 +333,7 @@ function MainApp() {
       );
       success('Lead Created', 'Added to pipeline.');
       setQuickActionModal(null);
-      loadCRMData();
+      refreshLeads();
     } catch (err: any) {
       error('Create Failed', err.message);
     }
@@ -217,7 +355,7 @@ function MainApp() {
       );
       success('Follow-up Scheduled', newFollowUp.title);
       setQuickActionModal(null);
-      loadCRMData();
+      refreshFollowUps();
     } catch (err: any) {
       error('Create Failed', err.message);
     }
@@ -278,116 +416,132 @@ function MainApp() {
   return (
     <ApplicationShell
       currentTab={currentTab}
-      onSelectTab={setCurrentTab}
+      onSelectTab={handleTabChange}
       pendingFollowUpsCount={pendingFollowUps}
       onGlobalSearch={setGlobalSearch}
       onQuickAction={(action) => setQuickActionModal(action)}
       onSeedData={handleSeedData}
       isSeeding={isSeeding}
+      companies={companies}
+      contacts={contacts}
+      leads={leads}
+      onSelectCompany={handleSelectCompany}
+      onSelectContact={handleSelectContact}
     >
-      {/* Tab routing */}
-      {currentTab === 'dashboard' && (
-        <DashboardView
-          stats={stats}
-          companies={companies}
-          contacts={contacts}
-          leads={leads}
-          followUps={followUps}
-          onNavigate={setCurrentTab}
-          onOpenQuickAction={(action) => setQuickActionModal(action)}
-        />
-      )}
+      {/* Tab routing with Suspense for on-demand lazy chunk loading */}
+      <Suspense fallback={<LoadingSpinner message="Loading YALIX CRM module..." />}>
+        {currentTab === 'dashboard' && (
+          <DashboardView
+            stats={stats}
+            companies={companies}
+            contacts={contacts}
+            leads={leads}
+            followUps={followUps}
+            onNavigate={handleTabChange}
+            onOpenQuickAction={(action) => setQuickActionModal(action)}
+          />
+        )}
 
-      {currentTab === 'companies' && (
-        <CompaniesView
-          companies={companies}
-          onRefresh={loadCRMData}
-          isLoading={dataLoading}
-        />
-      )}
+        {currentTab === 'companies' && (
+          <CompaniesView
+            companies={companies}
+            contacts={contacts}
+            onRefresh={refreshCompaniesAndContacts}
+            isLoading={dataLoading}
+            selectedCompanyId={selectedCompanyId}
+            onSelectCompany={handleSelectCompany}
+            onSelectContact={handleSelectContact}
+          />
+        )}
 
-      {currentTab === 'contacts' && (
-        <ContactsView
-          contacts={contacts}
-          companies={companies}
-          onRefresh={loadCRMData}
-          isLoading={dataLoading}
-        />
-      )}
+        {currentTab === 'contacts' && (
+          <ContactsView
+            contacts={contacts}
+            companies={companies}
+            onRefresh={refreshContacts}
+            isLoading={dataLoading}
+            selectedContactId={selectedContactId}
+            onSelectContact={handleSelectContact}
+            onSelectCompany={handleSelectCompany}
+          />
+        )}
 
-      {currentTab === 'leads' && (
-        <LeadsView
-          leads={leads}
-          companies={companies}
-          contacts={contacts}
-          products={products}
-          onRefresh={loadCRMData}
-          isLoading={dataLoading}
-        />
-      )}
+        {currentTab === 'leads' && (
+          <LeadsView
+            leads={leads}
+            companies={companies}
+            contacts={contacts}
+            products={products}
+            onRefresh={refreshLeads}
+            isLoading={dataLoading}
+          />
+        )}
 
-      {currentTab === 'products' && (
-        <ProductsView
-          products={products}
-          onRefresh={loadCRMData}
-          isLoading={dataLoading}
-        />
-      )}
+        {currentTab === 'products' && (
+          <ProductsView
+            products={products}
+            onRefresh={refreshProducts}
+            isLoading={dataLoading}
+          />
+        )}
 
-      {currentTab === 'followups' && (
-        <FollowUpsView
-          followUps={followUps}
-          companies={companies}
-          contacts={contacts}
-          leads={leads}
-          onRefresh={loadCRMData}
-          isLoading={dataLoading}
-        />
-      )}
+        {currentTab === 'followups' && (
+          <FollowUpsView
+            followUps={followUps}
+            companies={companies}
+            contacts={contacts}
+            leads={leads}
+            onRefresh={refreshFollowUps}
+            isLoading={dataLoading}
+          />
+        )}
 
-      {currentTab === 'import' && (
-        <ImportWizardView
-          companies={companies}
-          contacts={contacts}
-          products={products}
-          onRefresh={loadCRMData}
-          onNavigate={setCurrentTab}
-        />
-      )}
+        {currentTab === 'import' && (
+          <ImportWizardView
+            companies={companies}
+            contacts={contacts}
+            products={products}
+            onRefresh={loadCRMData}
+            onNavigate={setCurrentTab}
+          />
+        )}
 
-      {currentTab === 'templates' && (
-        <TemplatesView products={products} isLoading={dataLoading} />
-      )}
+        {currentTab === 'templates' && (
+          <TemplatesView products={products} isLoading={dataLoading} />
+        )}
 
-      {currentTab === 'campaigns' && (
-        <CampaignsView
-          campaigns={campaigns}
-          contacts={contacts}
-          products={products}
-          onRefresh={loadCRMData}
-          isLoading={dataLoading}
-        />
-      )}
+        {currentTab === 'campaigns' && (
+          <CampaignsView
+            campaigns={campaigns}
+            contacts={contacts}
+            products={products}
+            onRefresh={refreshCampaigns}
+            isLoading={dataLoading}
+          />
+        )}
 
-      {currentTab === 'reports' && (
-        <ReportsView
-          stats={stats}
-          companies={companies}
-          contacts={contacts}
-          leads={leads}
-          products={products}
-          followUps={followUps}
-        />
-      )}
+        {currentTab === 'reports' && (
+          <ReportsView
+            stats={stats}
+            companies={companies}
+            contacts={contacts}
+            leads={leads}
+            products={products}
+            followUps={followUps}
+            onSelectCompany={handleSelectCompany}
+            onSelectContact={handleSelectContact}
+          />
+        )}
 
-      {currentTab === 'settings' && (
-        <SettingsView
-          companies={companies}
-          contacts={contacts}
-          leads={leads}
-          followUps={followUps}
-        />
-      )}
+        {currentTab === 'settings' && (
+          <SettingsView
+            companies={companies}
+            contacts={contacts}
+            leads={leads}
+            followUps={followUps}
+          />
+        )}
+      </Suspense>
 
       {/* Quick Add Company Modal */}
       {quickActionModal === 'company' && (

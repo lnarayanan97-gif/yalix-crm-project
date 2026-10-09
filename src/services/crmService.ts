@@ -26,7 +26,73 @@ import {
   Campaign,
 } from '../types/crm';
 
+// --- Performance Caching & Request Deduplication Engine ---
+interface CacheEntry<T> {
+  data: T;
+  timestamp: number;
+}
+
+const CACHE_TTL_MS = 60000; // 60 seconds TTL
+
+const cacheStore = {
+  companies: null as CacheEntry<Company[]> | null,
+  contacts: null as CacheEntry<Contact[]> | null,
+  leads: null as CacheEntry<Lead[]> | null,
+  products: null as CacheEntry<Product[]> | null,
+  followUps: null as CacheEntry<FollowUp[]> | null,
+  campaigns: null as CacheEntry<Campaign[]> | null,
+  imports: null as CacheEntry<ImportRecord[]> | null,
+  activities: new Map<string, CacheEntry<Activity[]>>(),
+};
+
+const inFlightRequests = new Map<string, Promise<any>>();
+
+async function fetchWithCache<T>(
+  key: keyof typeof cacheStore,
+  forceRefresh: boolean,
+  fetcher: () => Promise<T>
+): Promise<T> {
+  const now = Date.now();
+  if (!forceRefresh && (cacheStore as any)[key] && (now - (cacheStore as any)[key].timestamp < CACHE_TTL_MS)) {
+    return (cacheStore as any)[key].data as T;
+  }
+  if (inFlightRequests.has(key)) {
+    return inFlightRequests.get(key) as Promise<T>;
+  }
+  const promise = (async () => {
+    try {
+      const data = await fetcher();
+      (cacheStore as any)[key] = { data, timestamp: Date.now() };
+      return data;
+    } finally {
+      inFlightRequests.delete(key);
+    }
+  })();
+  inFlightRequests.set(key, promise);
+  return promise;
+}
+
 export const crmService = {
+  // --- Cache Management ---
+  clearCache(key?: keyof typeof cacheStore): void {
+    if (key) {
+      if (key === 'activities') {
+        cacheStore.activities.clear();
+      } else {
+        (cacheStore as any)[key] = null;
+      }
+    } else {
+      cacheStore.companies = null;
+      cacheStore.contacts = null;
+      cacheStore.leads = null;
+      cacheStore.products = null;
+      cacheStore.followUps = null;
+      cacheStore.campaigns = null;
+      cacheStore.imports = null;
+      cacheStore.activities.clear();
+    }
+  },
+
   // --- Audit Logs ---
   async logAudit(
     action: string,
@@ -68,6 +134,8 @@ export const crmService = {
         createdAt: new Date().toISOString(),
       };
       await setDoc(doc(db, 'activities', activityId), payload);
+      // Invalidate target activities cache
+      cacheStore.activities.clear();
       return payload;
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, path);
@@ -76,34 +144,64 @@ export const crmService = {
 
   async getActivitiesForTarget(
     targetType: 'companyId' | 'contactId' | 'leadId',
-    targetId: string
+    targetId: string,
+    forceRefresh: boolean = false
   ): Promise<Activity[]> {
-    const path = 'activities';
-    try {
-      const q = query(collection(db, path), where(targetType, '==', targetId), limit(50));
-      const snap = await getDocs(q);
-      const items: Activity[] = [];
-      snap.forEach((d) => items.push(d.data() as Activity));
-      return items.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-    } catch (err) {
-      handleFirestoreError(err, OperationType.LIST, path);
+    const cacheKey = `${targetType}_${targetId}`;
+    const now = Date.now();
+    if (!forceRefresh && cacheStore.activities.has(cacheKey)) {
+      const entry = cacheStore.activities.get(cacheKey)!;
+      if (now - entry.timestamp < CACHE_TTL_MS) {
+        return entry.data;
+      }
     }
+
+    if (inFlightRequests.has(cacheKey)) {
+      return inFlightRequests.get(cacheKey) as Promise<Activity[]>;
+    }
+
+    const path = 'activities';
+    const promise = (async () => {
+      try {
+        const q = query(collection(db, path), where(targetType, '==', targetId), limit(50));
+        const snap = await getDocs(q);
+        const items: Activity[] = [];
+        snap.forEach((d) => items.push(d.data() as Activity));
+        const sorted = items.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+        cacheStore.activities.set(cacheKey, { data: sorted, timestamp: Date.now() });
+        return sorted;
+      } catch (err) {
+        handleFirestoreError(err, OperationType.LIST, path);
+      } finally {
+        inFlightRequests.delete(cacheKey);
+      }
+    })();
+
+    inFlightRequests.set(cacheKey, promise);
+    return promise;
   },
 
   // --- Companies ---
-  async getCompanies(): Promise<Company[]> {
+  async getCompanies(forceRefresh: boolean = false): Promise<Company[]> {
     const path = 'companies';
-    try {
-      const snap = await getDocs(collection(db, path));
-      const list: Company[] = [];
-      snap.forEach((d) => list.push(d.data() as Company));
-      return list.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
-    } catch (err) {
-      handleFirestoreError(err, OperationType.LIST, path);
-    }
+    return fetchWithCache('companies', forceRefresh, async () => {
+      try {
+        const snap = await getDocs(collection(db, path));
+        const list: Company[] = [];
+        snap.forEach((d) => list.push(d.data() as Company));
+        return list.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+      } catch (err) {
+        handleFirestoreError(err, OperationType.LIST, path);
+      }
+    });
   },
 
   async getCompany(companyId: string): Promise<Company | null> {
+    // Check in-memory companies cache first to avoid Firestore read
+    if (cacheStore.companies?.data) {
+      const cached = cacheStore.companies.data.find((c) => c.companyId === companyId);
+      if (cached) return cached;
+    }
     const path = `companies/${companyId}`;
     try {
       const snap = await getDoc(doc(db, 'companies', companyId));
@@ -138,6 +236,8 @@ export const crmService = {
       };
 
       await setDoc(docRef, payload);
+      // Invalidate companies cache
+      cacheStore.companies = null;
 
       await this.logAudit(
         isNew ? 'CREATE_COMPANY' : 'UPDATE_COMPANY',
@@ -167,6 +267,8 @@ export const crmService = {
     const path = `companies/${companyId}`;
     try {
       await deleteDoc(doc(db, 'companies', companyId));
+      // Invalidate companies cache
+      cacheStore.companies = null;
       await this.logAudit('DELETE_COMPANY', 'companies', companyId, userId, userEmail, `Deleted company ${companyId}`);
     } catch (err) {
       handleFirestoreError(err, OperationType.DELETE, path);
@@ -174,16 +276,18 @@ export const crmService = {
   },
 
   // --- Contacts ---
-  async getContacts(): Promise<Contact[]> {
+  async getContacts(forceRefresh: boolean = false): Promise<Contact[]> {
     const path = 'contacts';
-    try {
-      const snap = await getDocs(collection(db, path));
-      const list: Contact[] = [];
-      snap.forEach((d) => list.push(d.data() as Contact));
-      return list.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
-    } catch (err) {
-      handleFirestoreError(err, OperationType.LIST, path);
-    }
+    return fetchWithCache('contacts', forceRefresh, async () => {
+      try {
+        const snap = await getDocs(collection(db, path));
+        const list: Contact[] = [];
+        snap.forEach((d) => list.push(d.data() as Contact));
+        return list.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+      } catch (err) {
+        handleFirestoreError(err, OperationType.LIST, path);
+      }
+    });
   },
 
   async saveContact(
@@ -216,6 +320,8 @@ export const crmService = {
       };
 
       await setDoc(docRef, payload);
+      // Invalidate contacts cache
+      cacheStore.contacts = null;
 
       await this.logAudit(
         isNew ? 'CREATE_CONTACT' : 'UPDATE_CONTACT',
@@ -246,6 +352,8 @@ export const crmService = {
     const path = `contacts/${contactId}`;
     try {
       await deleteDoc(doc(db, 'contacts', contactId));
+      // Invalidate contacts cache
+      cacheStore.contacts = null;
       await this.logAudit('DELETE_CONTACT', 'contacts', contactId, userId, userEmail, `Deleted contact ${contactId}`);
     } catch (err) {
       handleFirestoreError(err, OperationType.DELETE, path);
@@ -253,16 +361,18 @@ export const crmService = {
   },
 
   // --- Leads ---
-  async getLeads(): Promise<Lead[]> {
+  async getLeads(forceRefresh: boolean = false): Promise<Lead[]> {
     const path = 'leads';
-    try {
-      const snap = await getDocs(collection(db, path));
-      const list: Lead[] = [];
-      snap.forEach((d) => list.push(d.data() as Lead));
-      return list.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
-    } catch (err) {
-      handleFirestoreError(err, OperationType.LIST, path);
-    }
+    return fetchWithCache('leads', forceRefresh, async () => {
+      try {
+        const snap = await getDocs(collection(db, path));
+        const list: Lead[] = [];
+        snap.forEach((d) => list.push(d.data() as Lead));
+        return list.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+      } catch (err) {
+        handleFirestoreError(err, OperationType.LIST, path);
+      }
+    });
   },
 
   async saveLead(
@@ -289,6 +399,8 @@ export const crmService = {
       };
 
       await setDoc(docRef, payload);
+      // Invalidate leads cache
+      cacheStore.leads = null;
 
       await this.logAudit(
         isNew ? 'CREATE_LEAD' : 'UPDATE_LEAD',
@@ -318,6 +430,8 @@ export const crmService = {
     const path = `leads/${leadId}`;
     try {
       await deleteDoc(doc(db, 'leads', leadId));
+      // Invalidate leads cache
+      cacheStore.leads = null;
       await this.logAudit('DELETE_LEAD', 'leads', leadId, userId, userEmail, `Deleted lead ${leadId}`);
     } catch (err) {
       handleFirestoreError(err, OperationType.DELETE, path);
@@ -325,16 +439,18 @@ export const crmService = {
   },
 
   // --- Products Master ---
-  async getProducts(): Promise<Product[]> {
+  async getProducts(forceRefresh: boolean = false): Promise<Product[]> {
     const path = 'products';
-    try {
-      const snap = await getDocs(collection(db, path));
-      const list: Product[] = [];
-      snap.forEach((d) => list.push(d.data() as Product));
-      return list.sort((a, b) => a.name.localeCompare(b.name));
-    } catch (err) {
-      handleFirestoreError(err, OperationType.LIST, path);
-    }
+    return fetchWithCache('products', forceRefresh, async () => {
+      try {
+        const snap = await getDocs(collection(db, path));
+        const list: Product[] = [];
+        snap.forEach((d) => list.push(d.data() as Product));
+        return list.sort((a, b) => a.name.localeCompare(b.name));
+      } catch (err) {
+        handleFirestoreError(err, OperationType.LIST, path);
+      }
+    });
   },
 
   async saveProduct(
@@ -362,6 +478,9 @@ export const crmService = {
       };
 
       await setDoc(docRef, payload);
+      // Invalidate products cache
+      cacheStore.products = null;
+
       await this.logAudit(
         isNew ? 'CREATE_PRODUCT' : 'UPDATE_PRODUCT',
         'products',
@@ -377,16 +496,18 @@ export const crmService = {
   },
 
   // --- Follow-ups ---
-  async getFollowUps(): Promise<FollowUp[]> {
+  async getFollowUps(forceRefresh: boolean = false): Promise<FollowUp[]> {
     const path = 'followups';
-    try {
-      const snap = await getDocs(collection(db, path));
-      const list: FollowUp[] = [];
-      snap.forEach((d) => list.push(d.data() as FollowUp));
-      return list.sort((a, b) => a.dueDate.localeCompare(b.dueDate));
-    } catch (err) {
-      handleFirestoreError(err, OperationType.LIST, path);
-    }
+    return fetchWithCache('followUps', forceRefresh, async () => {
+      try {
+        const snap = await getDocs(collection(db, path));
+        const list: FollowUp[] = [];
+        snap.forEach((d) => list.push(d.data() as FollowUp));
+        return list.sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+      } catch (err) {
+        handleFirestoreError(err, OperationType.LIST, path);
+      }
+    });
   },
 
   async saveFollowUp(
@@ -414,6 +535,8 @@ export const crmService = {
       };
 
       await setDoc(docRef, payload);
+      // Invalidate followUps cache
+      cacheStore.followUps = null;
 
       await this.addActivity({
         companyId: payload.companyId,
@@ -439,6 +562,8 @@ export const crmService = {
         completedAt: now,
         updatedAt: now,
       });
+      // Invalidate followUps cache
+      cacheStore.followUps = null;
       await this.addActivity({
         type: 'follow_up_completed',
         description: `Follow-up ${followUpId} completed`,
@@ -449,67 +574,76 @@ export const crmService = {
     }
   },
 
-  // --- Real Dynamic Dashboard Stats from Firestore ---
-  async getDashboardStats(): Promise<DashboardStats> {
+  // --- In-Memory Zero-Firestore-Read Stats Computation Engine ---
+  calculateDashboardStats(
+    companies: Company[],
+    contacts: Contact[],
+    leads: Lead[],
+    campaigns: Campaign[],
+    followUps: FollowUp[],
+    recentImportsCount: number = 0
+  ): DashboardStats {
+    let validEmails = 0;
+    for (const c of contacts) {
+      if (c.emailStatus === 'VALID') validEmails++;
+    }
+
+    let newLeads = 0;
+    let interestedLeads = 0;
+    for (const l of leads) {
+      if (l.leadStatus === 'NEW') newLeads++;
+      if (l.leadStatus === 'INTERESTED' || l.leadStatus === 'QUOTATION' || l.leadStatus === 'NEGOTIATION') {
+        interestedLeads++;
+      }
+    }
+
+    let activeCampaigns = 0;
+    for (const camp of campaigns) {
+      if (camp.status === 'RUNNING' || camp.status === 'SCHEDULED') activeCampaigns++;
+    }
+
+    const todayStr = new Date().toISOString().split('T')[0];
+    let todayFollowUps = 0;
+    let overdueFollowUps = 0;
+
+    for (const fu of followUps) {
+      if (fu.status === 'PENDING') {
+        if (fu.dueDate === todayStr) {
+          todayFollowUps++;
+        } else if (fu.dueDate < todayStr) {
+          overdueFollowUps++;
+        }
+      }
+    }
+
+    return {
+      totalCompanies: companies.length,
+      totalContacts: contacts.length,
+      validEmails,
+      newLeads,
+      interestedLeads,
+      activeCampaigns,
+      todayFollowUps,
+      overdueFollowUps,
+      recentImportsCount,
+      recentCampaignsCount: campaigns.length,
+    };
+  },
+
+  // --- Real Dynamic Dashboard Stats from Firestore (Cache-Aware & Deduplicated) ---
+  async getDashboardStats(forceRefresh: boolean = false): Promise<DashboardStats> {
     try {
-      const [companiesSnap, contactsSnap, leadsSnap, campaignsSnap, followupsSnap, importsSnap] = await Promise.all([
-        getDocs(collection(db, 'companies')),
-        getDocs(collection(db, 'contacts')),
-        getDocs(collection(db, 'leads')),
-        getDocs(collection(db, 'campaigns')),
-        getDocs(collection(db, 'followups')),
-        getDocs(collection(db, 'imports')),
+      // Re-uses cached collections or deduplicated promises — zero redundant reads!
+      const [comps, cnts, lds, camps, fus, imps] = await Promise.all([
+        this.getCompanies(forceRefresh),
+        this.getContacts(forceRefresh),
+        this.getLeads(forceRefresh),
+        this.getCampaigns(forceRefresh),
+        this.getFollowUps(forceRefresh),
+        this.getImports(forceRefresh),
       ]);
 
-      let validEmails = 0;
-      contactsSnap.forEach((doc) => {
-        const c = doc.data() as Contact;
-        if (c.emailStatus === 'VALID') validEmails++;
-      });
-
-      let newLeads = 0;
-      let interestedLeads = 0;
-      leadsSnap.forEach((doc) => {
-        const l = doc.data() as Lead;
-        if (l.leadStatus === 'NEW') newLeads++;
-        if (l.leadStatus === 'INTERESTED' || l.leadStatus === 'QUOTATION' || l.leadStatus === 'NEGOTIATION') {
-          interestedLeads++;
-        }
-      });
-
-      let activeCampaigns = 0;
-      campaignsSnap.forEach((doc) => {
-        const camp = doc.data() as Campaign;
-        if (camp.status === 'RUNNING' || camp.status === 'SCHEDULED') activeCampaigns++;
-      });
-
-      const todayStr = new Date().toISOString().split('T')[0];
-      let todayFollowUps = 0;
-      let overdueFollowUps = 0;
-
-      followupsSnap.forEach((doc) => {
-        const fu = doc.data() as FollowUp;
-        if (fu.status === 'PENDING') {
-          if (fu.dueDate === todayStr) {
-            todayFollowUps++;
-          } else if (fu.dueDate < todayStr) {
-            overdueFollowUps++;
-          }
-        }
-      });
-
-      return {
-        totalCompanies: companiesSnap.size,
-        totalContacts: contactsSnap.size,
-        validEmails,
-        newLeads,
-        interestedLeads,
-        activeCampaigns,
-        todayFollowUps,
-        overdueFollowUps,
-        recentImportsCount: importsSnap.size,
-        recentCampaignsCount: campaignsSnap.size,
-      };
+      return this.calculateDashboardStats(comps, cnts, lds, camps, fus, imps.length);
     } catch (err: any) {
       console.warn('Dashboard stats calculation notice (offline/deferred):', err?.message || err);
       return {
@@ -528,28 +662,218 @@ export const crmService = {
   },
 
   // --- Imports list ---
-  async getImports(): Promise<ImportRecord[]> {
+  async getImports(forceRefresh: boolean = false): Promise<ImportRecord[]> {
     const path = 'imports';
+    return fetchWithCache('imports', forceRefresh, async () => {
+      try {
+        const snap = await getDocs(collection(db, path));
+        const list: ImportRecord[] = [];
+        snap.forEach((d) => list.push(d.data() as ImportRecord));
+        return list.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+      } catch (err) {
+        handleFirestoreError(err, OperationType.LIST, path);
+      }
+    });
+  },
+
+  async createImportRecord(importRecord: ImportRecord, userId: string, userEmail?: string): Promise<void> {
+    const path = `imports/${importRecord.importId}`;
     try {
-      const snap = await getDocs(collection(db, path));
-      const list: ImportRecord[] = [];
-      snap.forEach((d) => list.push(d.data() as ImportRecord));
-      return list.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+      await setDoc(doc(db, 'imports', importRecord.importId), importRecord);
+      cacheStore.imports = null;
+      await this.logAudit(
+        'IMPORT_BATCH',
+        'imports',
+        importRecord.importId,
+        userId,
+        userEmail,
+        `Imported file ${importRecord.fileName} (${importRecord.rowCount} rows)`
+      );
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, path);
+    }
+  },
+
+  // --- Campaigns list ---
+  async getCampaigns(forceRefresh: boolean = false): Promise<Campaign[]> {
+    const path = 'campaigns';
+    return fetchWithCache('campaigns', forceRefresh, async () => {
+      try {
+        const snap = await getDocs(collection(db, path));
+        const list: Campaign[] = [];
+        snap.forEach((d) => list.push(d.data() as Campaign));
+        return list.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+      } catch (err) {
+        handleFirestoreError(err, OperationType.LIST, path);
+      }
+    });
+  },
+
+  async saveCampaign(
+    campaign: Partial<Campaign> & { name: string; subject: string },
+    userId: string,
+    userEmail?: string
+  ): Promise<Campaign> {
+    const campaignId = campaign.campaignId || 'camp_' + Date.now();
+    const path = `campaigns/${campaignId}`;
+    const now = new Date().toISOString();
+
+    try {
+      const docRef = doc(db, 'campaigns', campaignId);
+      const existingSnap = await getDoc(docRef);
+      const isNew = !existingSnap.exists();
+
+      const payload: Campaign = {
+        ...((existingSnap.data() as Campaign) || {}),
+        ...campaign,
+        id: campaignId,
+        campaignId,
+        status: campaign.status || 'SCHEDULED',
+        createdBy: isNew ? userId : (existingSnap.data() as Campaign)?.createdBy || userId,
+        createdAt: isNew ? now : (existingSnap.data() as Campaign)?.createdAt || now,
+        updatedAt: now,
+      };
+
+      await setDoc(docRef, payload);
+      cacheStore.campaigns = null;
+
+      await this.logAudit(
+        isNew ? 'CREATE_CAMPAIGN' : 'UPDATE_CAMPAIGN',
+        'campaigns',
+        campaignId,
+        userId,
+        userEmail,
+        `Saved campaign ${campaign.name}`
+      );
+
+      return payload;
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, path);
+    }
+  },
+
+  async deleteCampaign(campaignId: string, userId: string, userEmail?: string): Promise<void> {
+    const path = `campaigns/${campaignId}`;
+    try {
+      await deleteDoc(doc(db, 'campaigns', campaignId));
+      cacheStore.campaigns = null;
+      await this.logAudit('DELETE_CAMPAIGN', 'campaigns', campaignId, userId, userEmail, `Deleted campaign ${campaignId}`);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, path);
+    }
+  },
+
+  // --- Company Contacts Relationship ---
+  async getCompanyContacts(companyId: string): Promise<Contact[]> {
+    // If contacts are already loaded in memory, filter synchronously
+    if (cacheStore.contacts?.data) {
+      return cacheStore.contacts.data
+        .filter((c) => c.companyId === companyId)
+        .sort((a, b) => (a.firstName || '').localeCompare(b.firstName || ''));
+    }
+    const path = 'contacts';
+    try {
+      const q = query(collection(db, path), where('companyId', '==', companyId));
+      const snap = await getDocs(q);
+      const list: Contact[] = [];
+      snap.forEach((d) => list.push(d.data() as Contact));
+      return list.sort((a, b) => (a.firstName || '').localeCompare(b.firstName || ''));
     } catch (err) {
       handleFirestoreError(err, OperationType.LIST, path);
     }
   },
 
-  // --- Campaigns list ---
-  async getCampaigns(): Promise<Campaign[]> {
-    const path = 'campaigns';
+  // --- Duplicate Prevention Query ---
+  async findContactByEmail(email: string): Promise<Contact | null> {
+    const cleanEmail = email.trim().toLowerCase();
+    if (cacheStore.contacts?.data) {
+      const found = cacheStore.contacts.data.find((c) => (c.businessEmail || '').toLowerCase() === cleanEmail);
+      if (found) return found;
+    }
+    const path = 'contacts';
     try {
-      const snap = await getDocs(collection(db, path));
-      const list: Campaign[] = [];
-      snap.forEach((d) => list.push(d.data() as Campaign));
-      return list.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+      const q = query(collection(db, path), where('businessEmail', '==', cleanEmail), limit(1));
+      const snap = await getDocs(q);
+      if (snap.empty) return null;
+      return snap.docs[0].data() as Contact;
     } catch (err) {
       handleFirestoreError(err, OperationType.LIST, path);
     }
   },
+
+  // --- Real Global CRM Search across supported fields ---
+  async searchCRM(term: string): Promise<{
+    companies: Company[];
+    contacts: Contact[];
+    leads: Lead[];
+  }> {
+    const queryStr = term.trim().toLowerCase();
+    if (!queryStr) return { companies: [], contacts: [], leads: [] };
+
+    try {
+      const [comps, cnts, lds] = await Promise.all([
+        this.getCompanies(),
+        this.getContacts(),
+        this.getLeads(),
+      ]);
+
+      const companies = comps.filter((c) => {
+        const searchable = [
+          c.companyName,
+          c.website,
+          c.country,
+          c.city,
+          c.state,
+          c.industry,
+          c.notes,
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        return searchable.includes(queryStr);
+      });
+
+      const contacts = cnts.filter((c) => {
+        const searchable = [
+          c.firstName,
+          c.lastName,
+          c.businessEmail,
+          c.secondaryEmail,
+          c.companyName,
+          c.phone,
+          c.mobile,
+          c.jobTitle,
+          c.department,
+          c.country,
+          c.notes,
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        return searchable.includes(queryStr);
+      });
+
+      const leads = lds.filter((l) => {
+        const searchable = [
+          l.companyName,
+          l.contactName,
+          l.contactEmail,
+          l.productInterest,
+          l.leadStatus,
+          l.priority,
+          l.notes,
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        return searchable.includes(queryStr);
+      });
+
+      return { companies, contacts, leads };
+    } catch (err) {
+      console.warn('Search query warning:', err);
+      return { companies: [], contacts: [], leads: [] };
+    }
+  },
 };
+

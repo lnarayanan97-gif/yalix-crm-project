@@ -491,6 +491,8 @@ export function ImportWizardView({
             state: rec.state || undefined,
             industry: rec.industry || undefined,
             source: `Import: ${uploadedFile.name}`,
+            sourceDate: nowIso.split('T')[0],
+            importId,
             status: 'ACTIVE_PROSPECT',
             notes: rec.notes ? `Import: ${rec.notes}` : undefined,
             createdAt: nowIso,
@@ -520,6 +522,8 @@ export function ImportWizardView({
           country: rec.country || undefined,
           linkedinUrl: rec.linkedinUrl || undefined,
           source: `Import: ${uploadedFile.name}`,
+          sourceDate: nowIso.split('T')[0],
+          importId,
           emailStatus: 'VALID',
           contactStatus: 'ACTIVE',
           notes: rec.notes || undefined,
@@ -644,6 +648,7 @@ export function ImportWizardView({
       setFinalSummary(summary);
       setCurrentStep(10);
       success('Import Finished', `Synchronized ${createdContacts} contacts without duplicates.`);
+      crmService.clearCache();
       onRefresh();
     } catch (err: any) {
       console.error('Batch import execution failure:', err);

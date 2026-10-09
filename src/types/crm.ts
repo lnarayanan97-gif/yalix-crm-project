@@ -55,6 +55,7 @@ export interface Company {
   companyId: string;
   companyName: string;
   website?: string;
+  domain?: string;
   country?: string;
   state?: string;
   city?: string;
@@ -65,6 +66,7 @@ export interface Company {
   linkedinUrl?: string;
   source?: string;
   sourceDate?: string;
+  importId?: string;
   status?: string;
   notes?: string;
   originalCompanyName?: string;
@@ -89,6 +91,8 @@ export interface Contact {
   linkedinUrl?: string;
   country?: string;
   source?: string;
+  sourceDate?: string;
+  importId?: string;
   emailStatus: EmailStatus;
   contactStatus: ContactStatus;
   lastContactedAt?: string;

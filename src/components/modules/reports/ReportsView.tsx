@@ -1,6 +1,7 @@
 import React from 'react';
 import { BarChart3, Globe, PieChart, Users, Package, Target, Calendar, CheckCircle2 } from 'lucide-react';
 import { Company, Contact, Lead, Product, FollowUp, DashboardStats } from '../../../types/crm';
+import { DataQualityDashboard } from './DataQualityDashboard';
 
 interface ReportsViewProps {
   stats: DashboardStats;
@@ -9,6 +10,8 @@ interface ReportsViewProps {
   leads: Lead[];
   products: Product[];
   followUps: FollowUp[];
+  onSelectCompany?: (companyId: string) => void;
+  onSelectContact?: (contactId: string) => void;
 }
 
 export function ReportsView({
@@ -18,6 +21,8 @@ export function ReportsView({
   leads,
   products,
   followUps,
+  onSelectCompany,
+  onSelectContact,
 }: ReportsViewProps) {
   // Compute Country Distribution
   const countryCounts: Record<string, number> = {};
@@ -56,14 +61,14 @@ export function ReportsView({
         </div>
 
         <div className="bg-white p-4 rounded-xl border border-slate-200/80 shadow-2xs">
-          <span className="text-xs font-semibold text-slate-500 block">Email Deliverability Ratio</span>
+          <span className="text-xs font-semibold text-slate-500 block">Valid Email Syntax Ratio</span>
           <span className="text-2xl font-extrabold text-emerald-600 mt-1 block">
             {contacts.length > 0
               ? `${Math.round((stats.validEmails / contacts.length) * 100)}%`
               : '100%'}
           </span>
           <span className="text-[11px] text-slate-400 mt-0.5 block">
-            {stats.validEmails} verified addresses
+            {stats.validEmails} valid syntax addresses (format check)
           </span>
         </div>
 
@@ -162,6 +167,15 @@ export function ReportsView({
           </div>
         </div>
       </div>
+
+      {/* Comprehensive CRM Data Quality & Duplicate Candidate Center */}
+      <DataQualityDashboard
+        companies={companies}
+        contacts={contacts}
+        leads={leads}
+        onSelectCompany={onSelectCompany}
+        onSelectContact={onSelectContact}
+      />
     </div>
   );
 }

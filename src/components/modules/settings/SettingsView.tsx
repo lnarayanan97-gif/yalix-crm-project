@@ -8,12 +8,13 @@ import {
   FileSpreadsheet,
   AlertCircle,
   Clock,
+  Building2,
 } from 'lucide-react';
 import { useAuth } from '../../../context/AuthContext';
 import { Company, Contact, Lead, FollowUp, AuditLog } from '../../../types/crm';
 import { collection, getDocs, query, orderBy, limit } from 'firebase/firestore';
 import { db } from '../../../firebase/config';
-import * as XLSX from 'xlsx';
+import { generateCsvString, downloadCsvFile } from '../../../utils/csvExport';
 
 interface SettingsViewProps {
   companies: Company[];
@@ -47,7 +48,56 @@ export function SettingsView({ companies, contacts, leads, followUps }: Settings
     fetchAudit();
   }, [isAdmin]);
 
-  const handleExportFullBackup = (format: 'xlsx' | 'csv') => {
+  const handleExportCompaniesCsv = () => {
+    const csv = generateCsvString(companies, [
+      { key: 'companyId', label: 'Company ID' },
+      { key: 'companyName', label: 'Company Name' },
+      { key: 'website', label: 'Website / Domain' },
+      { key: 'country', label: 'Country' },
+      { key: 'city', label: 'City' },
+      { key: 'state', label: 'State' },
+      { key: 'industry', label: 'Industry' },
+      { key: 'companySize', label: 'Company Size' },
+      { key: 'revenue', label: 'Revenue' },
+      { key: 'status', label: 'Status' },
+      { key: 'source', label: 'Source' },
+      { key: 'sourceDate', label: 'Source Date' },
+      { key: 'importId', label: 'Import Batch ID' },
+      { key: 'notes', label: 'Notes' },
+      { key: 'createdAt', label: 'Created At' },
+      { key: 'updatedAt', label: 'Updated At' },
+    ]);
+    downloadCsvFile(csv, `YALIX_COMPANIES_ALL_${Date.now()}.csv`);
+  };
+
+  const handleExportContactsCsv = () => {
+    const csv = generateCsvString(contacts, [
+      { key: 'contactId', label: 'Contact ID' },
+      { key: 'companyId', label: 'Linked Company ID' },
+      { key: 'companyName', label: 'Company Name' },
+      { key: 'firstName', label: 'First Name' },
+      { key: 'lastName', label: 'Last Name' },
+      { key: 'businessEmail', label: 'Business Email' },
+      { key: 'emailStatus', label: 'Email Status' },
+      { key: 'jobTitle', label: 'Job Title' },
+      { key: 'department', label: 'Department' },
+      { key: 'phone', label: 'Phone' },
+      { key: 'mobile', label: 'Mobile' },
+      { key: 'country', label: 'Country' },
+      { key: 'linkedinUrl', label: 'LinkedIn Profile' },
+      { key: 'contactStatus', label: 'Contact Status' },
+      { key: 'source', label: 'Source' },
+      { key: 'sourceDate', label: 'Source Date' },
+      { key: 'importId', label: 'Import Batch ID' },
+      { key: 'notes', label: 'Notes' },
+      { key: 'createdAt', label: 'Created At' },
+      { key: 'updatedAt', label: 'Updated At' },
+    ]);
+    downloadCsvFile(csv, `YALIX_CONTACTS_ALL_${Date.now()}.csv`);
+  };
+
+  const handleExportFullBackup = async (format: 'xlsx' | 'csv') => {
+    const XLSX = await import('xlsx');
     const workbook = XLSX.utils.book_new();
 
     // 1. Companies
@@ -115,19 +165,36 @@ export function SettingsView({ companies, contacts, leads, followUps }: Settings
       </div>
 
       {/* Backup and Full Export */}
-      <div className="bg-white p-6 rounded-xl border border-slate-200/80 shadow-2xs">
+      <div className="bg-white p-6 rounded-xl border border-slate-200/80 shadow-2xs space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
-            <h3 className="text-sm font-bold text-slate-900">CRM Database Backup & Export</h3>
+            <h3 className="text-sm font-bold text-slate-900">CRM Database Backup & Complete Exports</h3>
             <p className="text-xs text-slate-500 mt-0.5">
-              Download the entire YALIX database with all companies, contacts, leads, and follow-ups.
+              Export all authorized company and contact master datasets in RFC 4180 Unicode CSV with BOM, or download the full multi-table backup workbook.
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={handleExportCompaniesCsv}
+              className="px-3 py-2 bg-slate-800 hover:bg-slate-900 text-white font-medium text-xs rounded-xl shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+              title="Export all authorized company records"
+            >
+              <Building2 className="w-3.5 h-3.5" />
+              <span>Export All Companies (CSV)</span>
+            </button>
+            <button
+              onClick={handleExportContactsCsv}
+              className="px-3 py-2 bg-slate-800 hover:bg-slate-900 text-white font-medium text-xs rounded-xl shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+              title="Export all authorized contact records"
+            >
+              <Users className="w-3.5 h-3.5" />
+              <span>Export All Contacts (CSV)</span>
+            </button>
             <button
               onClick={() => handleExportFullBackup('xlsx')}
               className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs rounded-xl shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+              title="Download entire CRM backup workbook"
             >
               <Download className="w-3.5 h-3.5" />
               <span>Full Backup (XLSX)</span>

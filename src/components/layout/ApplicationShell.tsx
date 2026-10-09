@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Sidebar, NavTab } from './Sidebar';
 import { Header } from './Header';
+import { Company, Contact, Lead } from '../../types/crm';
 
 interface ApplicationShellProps {
   currentTab: NavTab;
@@ -11,6 +12,11 @@ interface ApplicationShellProps {
   onQuickAction: (action: 'company' | 'contact' | 'lead' | 'followup') => void;
   onSeedData: () => void;
   isSeeding: boolean;
+  companies?: Company[];
+  contacts?: Contact[];
+  leads?: Lead[];
+  onSelectCompany?: (companyId: string) => void;
+  onSelectContact?: (contactId: string) => void;
 }
 
 export function ApplicationShell({
@@ -22,6 +28,11 @@ export function ApplicationShell({
   onQuickAction,
   onSeedData,
   isSeeding,
+  companies = [],
+  contacts = [],
+  leads = [],
+  onSelectCompany,
+  onSelectContact,
 }: ApplicationShellProps) {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
@@ -45,6 +56,12 @@ export function ApplicationShell({
           onQuickAction={onQuickAction}
           onSeedData={onSeedData}
           isSeeding={isSeeding}
+          companies={companies}
+          contacts={contacts}
+          leads={leads}
+          onSelectCompany={onSelectCompany}
+          onSelectContact={onSelectContact}
+          onSelectTab={onSelectTab}
         />
 
         <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto">

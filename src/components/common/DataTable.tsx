@@ -8,7 +8,7 @@ import {
   Download,
   Search,
 } from 'lucide-react';
-import * as XLSX from 'xlsx';
+import { generateCsvString, downloadCsvFile, ExportColumnDef } from '../../utils/csvExport';
 
 export interface Column<T> {
   key: string;
@@ -139,30 +139,45 @@ export function DataTable<T extends Record<string, any>>({
     }
   };
 
-  // Export to Excel / CSV
-  const handleExport = (format: 'xlsx' | 'csv') => {
+  // Export to Excel / CSV (Exporting all filtered matching records across all pages)
+  const handleExport = async (format: 'xlsx' | 'csv') => {
+    // If user has actively selected specific rows with checkboxes, export only those selected rows;
+    // otherwise, export ALL records matching the current filter/search across all pages (not just the current page).
     const exportItems = selectedKeys.size > 0
       ? data.filter((d) => selectedKeys.has(d[keyField]))
       : sortedData;
 
-    // Flatten/clean objects for export
-    const cleanRows = exportItems.map((item) => {
-      const row: Record<string, any> = {};
-      columns.forEach((c) => {
-        if (c.key !== 'actions') {
-          row[c.label] = item[c.key] ?? '';
-        }
-      });
-      return row;
-    });
+    const exportCols: ExportColumnDef<T>[] = columns
+      .filter((c) => c.key !== 'actions')
+      .map((c) => ({
+        key: c.key,
+        label: c.label,
+        getter: (item: T) => item[c.key],
+      }));
 
-    const worksheet = XLSX.utils.json_to_sheet(cleanRows);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Data');
-    const ext = format === 'xlsx' ? 'xlsx' : 'csv';
-    XLSX.writeFile(workbook, `${exportFilename}_${Date.now()}.${ext}`, {
-      bookType: format === 'xlsx' ? 'xlsx' : 'csv',
-    });
+    const timestamp = Date.now();
+    const baseFilename = `${exportFilename}_${timestamp}`;
+
+    if (format === 'csv') {
+      // RFC 4180 Unicode CSV with Byte Order Mark (BOM) & commas/quotes escaping
+      const csvString = generateCsvString(exportItems, exportCols);
+      downloadCsvFile(csvString, `${baseFilename}.csv`);
+    } else {
+      // Dynamically load XLSX on demand via SheetJS
+      const XLSX = await import('xlsx');
+      const cleanRows = exportItems.map((item) => {
+        const row: Record<string, any> = {};
+        exportCols.forEach((c) => {
+          row[c.label] = item[c.key] ?? '';
+        });
+        return row;
+      });
+
+      const worksheet = XLSX.utils.json_to_sheet(cleanRows);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Data');
+      XLSX.writeFile(workbook, `${baseFilename}.xlsx`, { bookType: 'xlsx' });
+    }
   };
 
   return (

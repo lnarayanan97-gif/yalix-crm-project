@@ -6,8 +6,7 @@ import { Modal } from '../../common/Modal';
 import { Badge } from '../../common/Badge';
 import { useAuth } from '../../../context/AuthContext';
 import { useToast } from '../../../context/ToastContext';
-import { collection, doc, setDoc } from 'firebase/firestore';
-import { db } from '../../../firebase/config';
+import { crmService } from '../../../services/crmService';
 
 interface CampaignsViewProps {
   campaigns: Campaign[];
@@ -70,7 +69,17 @@ export function CampaignsView({
     };
 
     try {
-      await setDoc(doc(db, 'campaigns', campaignId), payload);
+      await crmService.saveCampaign(
+        {
+          name: newCampaign.name,
+          subject: newCampaign.subject,
+          product: newCampaign.product || 'General',
+          recipientCount: eligibleRecipients.length,
+          status: 'SCHEDULED',
+        },
+        currentUser?.uid || 'user',
+        currentUser?.email || undefined
+      );
       success('Campaign Scheduled', `Queued ${eligibleRecipients.length} verified B2B recipients.`);
       setIsModalOpen(false);
       onRefresh();
