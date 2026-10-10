@@ -61,26 +61,59 @@ export function ProductsView({ products, onRefresh, isLoading }: ProductsViewPro
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingProduct.name?.trim()) {
+    if (!currentUser) {
+      error('Authentication Required', 'Please sign in with your authorized admin account to manage products.');
+      return;
+    }
+
+    const trimmedName = editingProduct.name?.trim();
+    if (!trimmedName) {
       error('Validation Error', 'Product Name is required.');
+      return;
+    }
+
+    // Check for duplicate product names in existing catalog
+    const duplicate = (products || []).find(
+      (p) =>
+        p.name.trim().toLowerCase() === trimmedName.toLowerCase() &&
+        p.productId !== editingProduct.productId
+    );
+    if (duplicate) {
+      error(
+        'Duplicate Product',
+        `A product named "${trimmedName}" already exists in the catalog (ID: ${duplicate.productId}).`
+      );
       return;
     }
 
     setIsSaving(true);
     try {
-      await crmService.saveProduct(
+      const saved = await crmService.saveProduct(
         {
           ...editingProduct,
-          name: editingProduct.name.trim(),
+          name: trimmedName,
         } as any,
-        currentUser?.uid || 'user',
-        currentUser?.email || undefined
+        currentUser.uid,
+        currentUser.email || undefined
       );
-      success('Product Saved', `${editingProduct.name} updated in master catalog.`);
+      success('Product Saved', `"${saved.name}" successfully saved in master catalog.`);
       setIsModalOpen(false);
-      onRefresh();
+      await onRefresh();
     } catch (err: any) {
-      error('Save Failed', err.message);
+      let displayError = err.message || 'Failed to save product to Firestore.';
+      try {
+        const parsed = JSON.parse(err.message);
+        if (parsed.error) {
+          displayError = parsed.error;
+        }
+      } catch {
+        // Not a JSON string
+      }
+      if (displayError.toLowerCase().includes('client is offline')) {
+        displayError =
+          'The Firestore client is currently offline or reconnecting. Please check your internet connection and click Save to retry.';
+      }
+      error('Save Failed', displayError);
     } finally {
       setIsSaving(false);
     }

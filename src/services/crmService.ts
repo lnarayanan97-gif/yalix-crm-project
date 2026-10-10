@@ -232,27 +232,43 @@ export const crmService = {
     userId: string,
     userEmail?: string
   ): Promise<Company> {
+    const isNew = !company.companyId;
     const companyId = company.companyId || 'comp_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
     const path = `companies/${companyId}`;
     const now = new Date().toISOString();
 
+    let existingData: Partial<Company> = {};
+    if (!isNew) {
+      const fromCache = cacheStore.companies?.data?.find((c) => c.companyId === companyId);
+      if (fromCache) {
+        existingData = fromCache;
+      } else {
+        try {
+          const docRef = doc(db, 'companies', companyId);
+          const snap = await getDoc(docRef);
+          if (snap.exists()) {
+            existingData = (snap.data() as Company) || {};
+          }
+        } catch (readErr) {
+          console.warn(`Pre-write read for company ${companyId} skipped/failed:`, readErr);
+        }
+      }
+    }
+
+    const payload: Company = {
+      ...existingData,
+      ...company,
+      id: companyId,
+      companyId,
+      createdAt: existingData.createdAt || now,
+      updatedAt: now,
+    };
+
     try {
       const docRef = doc(db, 'companies', companyId);
-      const existingSnap = await getDoc(docRef);
-      const isNew = !existingSnap.exists();
-
-      const payload: Company = {
-        ...((existingSnap.data() as Company) || {}),
-        ...company,
-        id: companyId,
-        companyId,
-        createdAt: isNew ? now : existingSnap.data()?.createdAt || now,
-        updatedAt: now,
-      };
-
       await setDoc(docRef, payload);
-      // Invalidate companies cache
-      cacheStore.companies = null;
+      // Invalidate companies cache and deduplicated requests
+      this.clearCache('companies');
 
       await this.logAudit(
         isNew ? 'CREATE_COMPANY' : 'UPDATE_COMPANY',
@@ -310,33 +326,49 @@ export const crmService = {
     userId: string,
     userEmail?: string
   ): Promise<Contact> {
+    const isNew = !contact.contactId;
     const contactId = contact.contactId || 'cnt_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
     const path = `contacts/${contactId}`;
     const now = new Date().toISOString();
 
+    let existingData: Partial<Contact> = {};
+    if (!isNew) {
+      const fromCache = cacheStore.contacts?.data?.find((c) => c.contactId === contactId);
+      if (fromCache) {
+        existingData = fromCache;
+      } else {
+        try {
+          const docRef = doc(db, 'contacts', contactId);
+          const snap = await getDoc(docRef);
+          if (snap.exists()) {
+            existingData = (snap.data() as Contact) || {};
+          }
+        } catch (readErr) {
+          console.warn(`Pre-write read for contact ${contactId} skipped/failed:`, readErr);
+        }
+      }
+    }
+
+    // Normalize email
+    const normalizedEmail = contact.businessEmail.trim().toLowerCase();
+
+    const payload: Contact = {
+      ...existingData,
+      ...contact,
+      businessEmail: normalizedEmail,
+      id: contactId,
+      contactId,
+      emailStatus: contact.emailStatus || (existingData.emailStatus || 'VALID'),
+      contactStatus: contact.contactStatus || (existingData.contactStatus || 'ACTIVE'),
+      createdAt: existingData.createdAt || now,
+      updatedAt: now,
+    };
+
     try {
       const docRef = doc(db, 'contacts', contactId);
-      const existingSnap = await getDoc(docRef);
-      const isNew = !existingSnap.exists();
-
-      // Normalize email
-      const normalizedEmail = contact.businessEmail.trim().toLowerCase();
-
-      const payload: Contact = {
-        ...((existingSnap.data() as Contact) || {}),
-        ...contact,
-        businessEmail: normalizedEmail,
-        id: contactId,
-        contactId,
-        emailStatus: contact.emailStatus || 'VALID',
-        contactStatus: contact.contactStatus || 'ACTIVE',
-        createdAt: isNew ? now : existingSnap.data()?.createdAt || now,
-        updatedAt: now,
-      };
-
       await setDoc(docRef, payload);
-      // Invalidate contacts cache
-      cacheStore.contacts = null;
+      // Invalidate contacts cache and deduplicated requests
+      this.clearCache('contacts');
 
       await this.logAudit(
         isNew ? 'CREATE_CONTACT' : 'UPDATE_CONTACT',
@@ -395,27 +427,43 @@ export const crmService = {
     userId: string,
     userEmail?: string
   ): Promise<Lead> {
+    const isNew = !lead.leadId;
     const leadId = lead.leadId || 'lead_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
     const path = `leads/${leadId}`;
     const now = new Date().toISOString();
 
+    let existingData: Partial<Lead> = {};
+    if (!isNew) {
+      const fromCache = cacheStore.leads?.data?.find((l) => l.leadId === leadId);
+      if (fromCache) {
+        existingData = fromCache;
+      } else {
+        try {
+          const docRef = doc(db, 'leads', leadId);
+          const snap = await getDoc(docRef);
+          if (snap.exists()) {
+            existingData = (snap.data() as Lead) || {};
+          }
+        } catch (readErr) {
+          console.warn(`Pre-write read for lead ${leadId} skipped/failed:`, readErr);
+        }
+      }
+    }
+
+    const payload: Lead = {
+      ...existingData,
+      ...lead,
+      id: leadId,
+      leadId,
+      createdAt: existingData.createdAt || now,
+      updatedAt: now,
+    };
+
     try {
       const docRef = doc(db, 'leads', leadId);
-      const existingSnap = await getDoc(docRef);
-      const isNew = !existingSnap.exists();
-
-      const payload: Lead = {
-        ...((existingSnap.data() as Lead) || {}),
-        ...lead,
-        id: leadId,
-        leadId,
-        createdAt: isNew ? now : existingSnap.data()?.createdAt || now,
-        updatedAt: now,
-      };
-
       await setDoc(docRef, payload);
-      // Invalidate leads cache
-      cacheStore.leads = null;
+      // Invalidate leads cache and deduplicated requests
+      this.clearCache('leads');
 
       await this.logAudit(
         isNew ? 'CREATE_LEAD' : 'UPDATE_LEAD',
@@ -473,28 +521,57 @@ export const crmService = {
     userId: string,
     userEmail?: string
   ): Promise<Product> {
+    const isNew = !product.productId;
     const productId = product.productId || 'prod_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
     const path = `products/${productId}`;
     const now = new Date().toISOString();
 
+    // Check duplicate product name if creating new product
+    if (isNew && cacheStore.products?.data) {
+      const trimmedLower = product.name.trim().toLowerCase();
+      const duplicate = cacheStore.products.data.find(
+        (p) => p.name.trim().toLowerCase() === trimmedLower
+      );
+      if (duplicate) {
+        throw new Error(
+          `A product with the name "${product.name.trim()}" already exists in the catalog (ID: ${duplicate.productId}).`
+        );
+      }
+    }
+
+    let existingData: Partial<Product> = {};
+    if (!isNew) {
+      const fromCache = cacheStore.products?.data?.find((p) => p.productId === productId);
+      if (fromCache) {
+        existingData = fromCache;
+      } else {
+        try {
+          const docRef = doc(db, 'products', productId);
+          const snap = await getDoc(docRef);
+          if (snap.exists()) {
+            existingData = (snap.data() as Product) || {};
+          }
+        } catch (readErr) {
+          console.warn(`Pre-write read for product ${productId} skipped/failed:`, readErr);
+        }
+      }
+    }
+
+    const payload: Product = {
+      ...existingData,
+      ...product,
+      id: productId,
+      productId,
+      active: product.active ?? (existingData.active ?? true),
+      createdAt: existingData.createdAt || now,
+      updatedAt: now,
+    };
+
     try {
       const docRef = doc(db, 'products', productId);
-      const existingSnap = await getDoc(docRef);
-      const isNew = !existingSnap.exists();
-
-      const payload: Product = {
-        ...((existingSnap.data() as Product) || {}),
-        ...product,
-        id: productId,
-        productId,
-        active: product.active ?? true,
-        createdAt: isNew ? now : existingSnap.data()?.createdAt || now,
-        updatedAt: now,
-      };
-
       await setDoc(docRef, payload);
-      // Invalidate products cache
-      cacheStore.products = null;
+      // Invalidate products cache and deduplicated requests
+      this.clearCache('products');
 
       await this.logAudit(
         isNew ? 'CREATE_PRODUCT' : 'UPDATE_PRODUCT',
@@ -530,28 +607,44 @@ export const crmService = {
     userId: string,
     userEmail?: string
   ): Promise<FollowUp> {
+    const isNew = !followUp.followUpId;
     const followUpId = followUp.followUpId || 'fu_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
     const path = `followups/${followUpId}`;
     const now = new Date().toISOString();
 
+    let existingData: Partial<FollowUp> = {};
+    if (!isNew) {
+      const fromCache = cacheStore.followUps?.data?.find((f) => f.followUpId === followUpId);
+      if (fromCache) {
+        existingData = fromCache;
+      } else {
+        try {
+          const docRef = doc(db, 'followups', followUpId);
+          const snap = await getDoc(docRef);
+          if (snap.exists()) {
+            existingData = (snap.data() as FollowUp) || {};
+          }
+        } catch (readErr) {
+          console.warn(`Pre-write read for followUp ${followUpId} skipped/failed:`, readErr);
+        }
+      }
+    }
+
+    const payload: FollowUp = {
+      ...existingData,
+      ...followUp,
+      id: followUpId,
+      followUpId,
+      status: followUp.status || (existingData.status || 'PENDING'),
+      createdAt: existingData.createdAt || now,
+      updatedAt: now,
+    };
+
     try {
       const docRef = doc(db, 'followups', followUpId);
-      const existingSnap = await getDoc(docRef);
-      const isNew = !existingSnap.exists();
-
-      const payload: FollowUp = {
-        ...((existingSnap.data() as FollowUp) || {}),
-        ...followUp,
-        id: followUpId,
-        followUpId,
-        status: followUp.status || 'PENDING',
-        createdAt: isNew ? now : existingSnap.data()?.createdAt || now,
-        updatedAt: now,
-      };
-
       await setDoc(docRef, payload);
-      // Invalidate followUps cache
-      cacheStore.followUps = null;
+      // Invalidate followUps cache and deduplicated requests
+      this.clearCache('followUps');
 
       await this.addActivity({
         companyId: payload.companyId,
@@ -752,28 +845,46 @@ export const crmService = {
     userId: string,
     userEmail?: string
   ): Promise<Campaign> {
+    const isNew = !campaign.campaignId;
     const campaignId = campaign.campaignId || 'camp_' + Date.now();
     const path = `campaigns/${campaignId}`;
     const now = new Date().toISOString();
 
+    let existingData: Partial<Campaign> = {};
+    if (!isNew) {
+      const fromCache = cacheStore.campaigns?.data?.find((c) => c.campaignId === campaignId);
+      if (fromCache) {
+        existingData = fromCache;
+      } else {
+        try {
+          const docRef = doc(db, 'campaigns', campaignId);
+          const snap = await getDoc(docRef);
+          if (snap.exists()) {
+            existingData = (snap.data() as Campaign) || {};
+          }
+        } catch (readErr) {
+          console.warn(`Pre-write read for campaign ${campaignId} skipped/failed:`, readErr);
+        }
+      }
+    }
+
+    const payload: Campaign = {
+      ...existingData,
+      ...campaign,
+      id: campaignId,
+      campaignId,
+      status: campaign.status || (existingData.status || 'SCHEDULED'),
+      recipientCount: campaign.recipientCount ?? (existingData.recipientCount ?? 0),
+      createdBy: existingData.createdBy || userId,
+      createdAt: existingData.createdAt || now,
+      updatedAt: now,
+    };
+
     try {
       const docRef = doc(db, 'campaigns', campaignId);
-      const existingSnap = await getDoc(docRef);
-      const isNew = !existingSnap.exists();
-
-      const payload: Campaign = {
-        ...((existingSnap.data() as Campaign) || {}),
-        ...campaign,
-        id: campaignId,
-        campaignId,
-        status: campaign.status || 'SCHEDULED',
-        createdBy: isNew ? userId : (existingSnap.data() as Campaign)?.createdBy || userId,
-        createdAt: isNew ? now : (existingSnap.data() as Campaign)?.createdAt || now,
-        updatedAt: now,
-      };
-
       await setDoc(docRef, payload);
-      cacheStore.campaigns = null;
+      // Invalidate campaigns cache and deduplicated requests
+      this.clearCache('campaigns');
 
       await this.logAudit(
         isNew ? 'CREATE_CAMPAIGN' : 'UPDATE_CAMPAIGN',
