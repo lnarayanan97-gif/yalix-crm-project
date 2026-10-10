@@ -1,0 +1,12 @@
+name = "yalix-crm-api-staging"
+main = "src/index.ts"
+compatibility_date = "2026-10-10"
+
+[vars]
+FIREBASE_PROJECT_ID = "yalix-crm-project"
+ALLOWED_ORIGINS = "https://crm.yalixvalor.com,http://localhost:3000"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "yalix-crm-staging"
+database_id = "ee9ffbe6-ac6a-449d-9351-25260a55b3c1"
