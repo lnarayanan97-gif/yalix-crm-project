@@ -9,4 +9,4 @@ ALLOWED_ORIGINS = "https://crm.yalixvalor.com,http://localhost:3000"
 [[d1_databases]]
 binding = "DB"
 database_name = "yalix-crm-staging"
-database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+database_id = "ee9ffbe6-ac6a-449d-9351-25260a55b3c1"
